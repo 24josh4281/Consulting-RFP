@@ -41,6 +41,20 @@ git remote add origin https://github.com/YOUR_ACCOUNT/climate-rfp-tracker.git
 git remote -v
 ```
 
+또는 이 프로젝트에 포함된 스크립트를 사용할 수 있습니다.
+
+먼저 dry-run으로 확인:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\connect_github.ps1 -RepoUrl "https://github.com/YOUR_ACCOUNT/climate-rfp-tracker.git" -DryRun
+```
+
+실제 연결 및 push:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\connect_github.ps1 -RepoUrl "https://github.com/YOUR_ACCOUNT/climate-rfp-tracker.git"
+```
+
 ## 3. GitHub로 push
 
 ```powershell
@@ -73,4 +87,3 @@ gh repo create climate-rfp-tracker --private --source . --remote origin --push
 - 서비스키는 환경변수 또는 로컬 `.env`에만 둡니다.
 - `.env`, DB, CSV/HTML 산출물은 현재 `.gitignore`로 제외되어 있습니다.
 - 실제 민간 사이트 수집 설정을 켤 때는 사이트 약관/권한을 먼저 확인하세요.
-

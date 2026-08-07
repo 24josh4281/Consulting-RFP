@@ -90,7 +90,13 @@ $env:DATA_GO_KR_SERVICE_KEY="발급받은_서비스키"
 
 ## GitHub 연동
 
-이 폴더는 로컬 git 저장소로 초기화되어 있습니다. GitHub 원격 저장소 연결 방법은 [docs/GITHUB_SETUP.md](docs/GITHUB_SETUP.md)를 확인하세요.
+이 폴더는 로컬 git 저장소로 초기화되어 있습니다. GitHub 원격 저장소 URL을 받은 뒤 아래처럼 연결할 수 있습니다.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\connect_github.ps1 -RepoUrl "https://github.com/YOUR_ACCOUNT/climate-rfp-tracker.git"
+```
+
+자세한 방법은 [docs/GITHUB_SETUP.md](docs/GITHUB_SETUP.md)를 확인하세요.
 
 ## 프로젝트 구조
 
