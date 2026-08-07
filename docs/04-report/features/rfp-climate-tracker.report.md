@@ -247,8 +247,34 @@
 
 | Version | Date | Changes | Author |
 |---------|------|---------|--------|
+| 1.2 | 2026-08-07 | Added `.env` auto-loading, live readiness checks, and safe PowerShell failure handling | Codex |
 | 1.1 | 2026-08-07 | Added RFP/document index reports and CLI commands | Codex |
 | 1.0 | 2026-08-07 | Completion report created | Codex |
+
+## Post-MVP Update: Live Readiness Workflow
+
+### What changed
+
+- Added automatic `.env` loading for CLI commands.
+- Added `doctor` command to check whether enabled live sources have required API-key environment variables.
+- Added `source-toggle` command to create local source configs without overwriting `configs/sources.example.json`.
+- Added `scripts/run_live_g2b_check.ps1` for safe short 나라장터 live tests.
+- Updated PowerShell scripts to stop on failed native commands by checking `$LASTEXITCODE`.
+
+### Validation result
+
+| Check | Result |
+|-------|--------|
+| Python compile | PASS |
+| Unit tests | PASS: 9 tests |
+| `source-toggle` | PASS |
+| `doctor --strict` without key | PASS: blocks live run |
+| `run_live_g2b_check.ps1` without key | PASS: stops before live sync |
+| Normal sample run | PASS |
+
+### Remaining limitation
+
+Actual 나라장터 live collection still requires the user to add `DATA_GO_KR_SERVICE_KEY` to `.env` or the PowerShell environment.
 
 ## Post-MVP Update: RFP Document Index
 

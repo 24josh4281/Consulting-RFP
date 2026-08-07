@@ -101,12 +101,29 @@ python -m rfp_tracker rfp-documents --db data\rfp_tracker.db --limit 50
 $env:DATA_GO_KR_SERVICE_KEY="발급받은_서비스키"
 ```
 
-그 다음 `configs/sources.example.json`에서 `g2b_service_bids`의 `enabled`를 `true`로 바꿉니다.
+또는 `.env.example`을 `.env`로 복사한 뒤 `.env` 안에 키를 넣어도 됩니다. `.env`는 git에 올라가지 않습니다.
+
+```powershell
+Copy-Item .env.example .env
+notepad .env
+```
+
+그 다음 원본 예시 파일을 직접 바꾸지 말고 로컬 설정 파일을 생성합니다.
+
+```powershell
+python -m rfp_tracker source-toggle --source-id g2b_service_bids --enable --out configs\sources.local.json
+```
+
+실시간 실행 준비 상태를 확인합니다.
+
+```powershell
+python -m rfp_tracker doctor --config configs\sources.local.json
+```
 
 처음에는 기간을 짧게 테스트하세요.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\run_tracker.ps1 -Days 3
+powershell -ExecutionPolicy Bypass -File .\scripts\run_live_g2b_check.ps1 -Days 3
 ```
 
 ## 6. 운영 주의사항

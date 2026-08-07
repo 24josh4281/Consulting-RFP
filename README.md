@@ -157,3 +157,24 @@ Generated outputs:
 - `reports/rfp_documents.csv`: Excel-ready document checklist
 
 Rows marked as `missing` mean the notice exists, but no RFP/task-document link has been collected yet. This can happen when a portal requires login, uses JavaScript, hides files behind a detail page, or needs a source-specific adapter.
+
+## Live G2B readiness workflow
+
+Real 나라장터 collection needs a public-data service key. Put the key in `.env` or a PowerShell environment variable; never commit the real key.
+
+```powershell
+Copy-Item .env.example .env
+# Edit .env and fill DATA_GO_KR_SERVICE_KEY=
+
+python -m rfp_tracker api-keys
+python -m rfp_tracker source-toggle --source-id g2b_service_bids --enable --out configs\sources.local.json
+python -m rfp_tracker doctor --config configs\sources.local.json
+```
+
+When `doctor` says the live source is ready:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run_live_g2b_check.ps1 -Days 3
+```
+
+Local live configs such as `configs/sources.local.json` are ignored by git so operational source switches do not accidentally overwrite the shared example config.

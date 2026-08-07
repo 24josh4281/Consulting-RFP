@@ -12,8 +12,20 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 Set-Location -LiteralPath $ProjectRoot
 
-python -m rfp_tracker sync --config $Config --db $Database --days $Days
-python -m rfp_tracker render --db $Database --out $Dashboard
-python -m rfp_tracker export-csv --db $Database --out $Csv
-python -m rfp_tracker render-documents --db $Database --html $DocumentsHtml --csv $DocumentsCsv
-python -m rfp_tracker stats --db $Database
+function Invoke-Checked {
+  param(
+    [scriptblock]$Command,
+    [string]$Name
+  )
+
+  & $Command
+  if ($LASTEXITCODE -ne 0) {
+    throw "$Name failed with exit code $LASTEXITCODE"
+  }
+}
+
+Invoke-Checked { python -m rfp_tracker sync --config $Config --db $Database --days $Days } "sync"
+Invoke-Checked { python -m rfp_tracker render --db $Database --out $Dashboard } "render"
+Invoke-Checked { python -m rfp_tracker export-csv --db $Database --out $Csv } "export-csv"
+Invoke-Checked { python -m rfp_tracker render-documents --db $Database --html $DocumentsHtml --csv $DocumentsCsv } "render-documents"
+Invoke-Checked { python -m rfp_tracker stats --db $Database } "stats"

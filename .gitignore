@@ -5,6 +5,7 @@ __pycache__/
 !.env.example
 .bkit/
 configs/*.generated.json
+configs/*.local.json
 data/*.db
 data/*.db-*
 data/*.csv

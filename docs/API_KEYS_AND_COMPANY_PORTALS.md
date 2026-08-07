@@ -117,3 +117,33 @@ python -m rfp_tracker api-keys
 4. 소량 수집 테스트
 5. 출처별 전용 어댑터 구현
 
+## 6. `.env` 자동 로딩 및 live 사전점검
+
+프로젝트 루트에 `.env` 파일을 만들면 `python -m rfp_tracker ...` 명령이 자동으로 읽습니다. 실제 키 값은 출력하지 않고 `PRESENT`/`MISSING` 상태만 보여줍니다.
+
+```powershell
+Copy-Item .env.example .env
+notepad .env
+python -m rfp_tracker api-keys
+```
+
+나라장터 live 수집은 공유 예시 설정을 직접 수정하지 않고, 로컬 전용 설정 파일로 켭니다.
+
+```powershell
+python -m rfp_tracker source-toggle --source-id g2b_service_bids --enable --out configs\sources.local.json
+python -m rfp_tracker doctor --config configs\sources.local.json
+```
+
+`doctor`가 준비 완료 상태를 보여주면 짧은 기간으로 먼저 테스트합니다.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run_live_g2b_check.ps1 -Days 3
+```
+
+live 테스트 산출물:
+
+- `data/rfp_tracker_live.db`
+- `reports/dashboard_live.html`
+- `reports/notices_live.csv`
+- `reports/rfp_documents_live.html`
+- `reports/rfp_documents_live.csv`

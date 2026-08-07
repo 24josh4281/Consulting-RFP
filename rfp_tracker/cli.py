@@ -14,7 +14,7 @@ from .companies import (
     write_companies_csv,
     write_portal_candidates_csv,
 )
-from .config import enabled_sources, read_json
+from .config import enabled_sources, load_dotenv, read_json, set_source_enabled, write_json
 from .documents import (
     DOCUMENT_KIND_LABELS,
     list_document_rows,
@@ -36,6 +36,7 @@ from .storage import (
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT_DIR / "configs" / "sources.example.json"
+DEFAULT_LOCAL_CONFIG = ROOT_DIR / "configs" / "sources.local.json"
 DEFAULT_KEYWORDS = ROOT_DIR / "configs" / "keywords.json"
 DEFAULT_API_KEYS = ROOT_DIR / "configs" / "api_keys.example.json"
 DEFAULT_COMPANY_UNIVERSE = ROOT_DIR / "data" / "krx_listed_companies.csv"
@@ -251,6 +252,63 @@ def api_keys_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def doctor_command(args: argparse.Namespace) -> int:
+    source_config = read_json(args.config)
+    key_config = read_json(args.keys)
+    sources = source_config.get("sources", [])
+    enabled = enabled_sources(source_config)
+    key_statuses = get_api_key_status(key_config)
+    key_by_env = {status.env: status for status in key_statuses}
+
+    print("Climate RFP Tracker readiness check")
+    print(f"config={args.config}")
+    print(f"sources_total={len(sources)}")
+    print(f"sources_enabled={len(enabled)}")
+
+    has_issue = False
+    for source in sources:
+        state = "ON " if source.get("enabled") else "OFF"
+        print(f"[{state}] {source.get('id')} - {source.get('type')}")
+        env_name = source.get("service_key_env")
+        if source.get("enabled") and env_name:
+            key_status = key_by_env.get(env_name)
+            if not key_status or not key_status.present:
+                has_issue = True
+                print(f"  issue: missing required environment variable {env_name}")
+
+    for status in key_statuses:
+        state = "PRESENT" if status.present else "MISSING"
+        print(f"[{state}] {status.env}")
+
+    if has_issue:
+        print("[ready] NO - fix the issue lines above before live sync.")
+        return 1 if args.strict else 0
+
+    print("[ready] YES - enabled sources have the required key configuration.")
+    return 0
+
+
+def source_toggle_command(args: argparse.Namespace) -> int:
+    if args.enable == args.disable:
+        print("[error] Use either --enable or --disable.", file=sys.stderr)
+        return 2
+
+    source_config = read_json(args.config)
+    enabled = bool(args.enable)
+    updated = set_source_enabled(source_config, args.source_id, enabled)
+    if not updated:
+        print(f"[error] Source id not found: {args.source_id}", file=sys.stderr)
+        return 1
+
+    write_json(args.out, source_config)
+    state = "enabled" if enabled else "disabled"
+    print(f"[done] Source {args.source_id} {state}")
+    print(f"[done] Output config: {args.out}")
+    if str(args.out) != str(args.config):
+        print("[note] Original config was not overwritten.")
+    return 0
+
+
 def companies_fetch_krx_command(args: argparse.Namespace) -> int:
     companies = fetch_krx_listed_companies(timeout=args.timeout)
     write_companies_csv(companies, args.out)
@@ -354,6 +412,20 @@ def build_parser() -> argparse.ArgumentParser:
     api_keys.add_argument("--config", default=str(DEFAULT_API_KEYS))
     api_keys.set_defaults(func=api_keys_command)
 
+    doctor = subparsers.add_parser("doctor", help="Check whether live sync is ready")
+    doctor.add_argument("--config", default=str(DEFAULT_CONFIG))
+    doctor.add_argument("--keys", default=str(DEFAULT_API_KEYS))
+    doctor.add_argument("--strict", action="store_true", help="Return non-zero when live readiness issues exist")
+    doctor.set_defaults(func=doctor_command)
+
+    source_toggle = subparsers.add_parser("source-toggle", help="Enable or disable a source in a copied config file")
+    source_toggle.add_argument("--config", default=str(DEFAULT_CONFIG))
+    source_toggle.add_argument("--out", default=str(DEFAULT_LOCAL_CONFIG))
+    source_toggle.add_argument("--source-id", required=True)
+    source_toggle.add_argument("--enable", action="store_true")
+    source_toggle.add_argument("--disable", action="store_true")
+    source_toggle.set_defaults(func=source_toggle_command)
+
     companies_fetch_krx = subparsers.add_parser(
         "companies-fetch-krx",
         help="KRX 공개 상장법인 목록을 CSV로 저장",
@@ -385,6 +457,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    load_dotenv(ROOT_DIR / ".env")
     parser = build_parser()
     args = parser.parse_args(argv)
     return int(args.func(args))

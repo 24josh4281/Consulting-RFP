@@ -1,8 +1,10 @@
 import unittest
+import os
 import tempfile
 from pathlib import Path
 
 from rfp_tracker.companies import Company, generate_homepage_sources, normalize_url
+from rfp_tracker.config import load_dotenv, set_source_enabled
 from rfp_tracker.documents import classify_document, list_document_rows
 from rfp_tracker.keyword_matcher import score_text
 from rfp_tracker.models import Attachment, Notice
@@ -79,6 +81,41 @@ class CompanyUtilityTests(unittest.TestCase):
             self.assertIn('"enabled": false', text)
             self.assertIn("Example Corp", text)
             self.assertNotIn("No Homepage", text)
+
+
+class ConfigUtilityTests(unittest.TestCase):
+    def test_load_dotenv_sets_missing_values_without_override(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            env_path = Path(tmp_dir) / ".env"
+            env_path.write_text("RFP_TRACKER_TEST_KEY=from_file\n", encoding="utf-8")
+            original = os.environ.pop("RFP_TRACKER_TEST_KEY", None)
+            try:
+                loaded = load_dotenv(env_path)
+                self.assertEqual(loaded, 1)
+                self.assertEqual(os.environ["RFP_TRACKER_TEST_KEY"], "from_file")
+
+                env_path.write_text("RFP_TRACKER_TEST_KEY=changed\n", encoding="utf-8")
+                loaded = load_dotenv(env_path)
+                self.assertEqual(loaded, 0)
+                self.assertEqual(os.environ["RFP_TRACKER_TEST_KEY"], "from_file")
+            finally:
+                if original is None:
+                    os.environ.pop("RFP_TRACKER_TEST_KEY", None)
+                else:
+                    os.environ["RFP_TRACKER_TEST_KEY"] = original
+
+    def test_set_source_enabled_updates_matching_source_only(self):
+        config = {
+            "sources": [
+                {"id": "sample", "enabled": True},
+                {"id": "g2b_service_bids", "enabled": False},
+            ]
+        }
+        updated = set_source_enabled(config, "g2b_service_bids", True)
+        self.assertTrue(updated)
+        self.assertTrue(config["sources"][1]["enabled"])
+        self.assertTrue(config["sources"][0]["enabled"])
+        self.assertFalse(set_source_enabled(config, "missing", True))
 
 
 class DocumentIndexTests(unittest.TestCase):
