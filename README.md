@@ -88,6 +88,10 @@ $env:DATA_GO_KR_SERVICE_KEY="발급받은_서비스키"
 4. 놓친 공고가 있으면 `configs/keywords.json`에 키워드 추가
 5. 안정화 후 Windows 작업 스케줄러로 30~60분 간격 실행
 
+## GitHub 연동
+
+이 폴더는 로컬 git 저장소로 초기화되어 있습니다. GitHub 원격 저장소 연결 방법은 [docs/GITHUB_SETUP.md](docs/GITHUB_SETUP.md)를 확인하세요.
+
 ## 프로젝트 구조
 
 ```text
