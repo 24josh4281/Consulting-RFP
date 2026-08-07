@@ -3,8 +3,9 @@ import tempfile
 from pathlib import Path
 
 from rfp_tracker.companies import Company, generate_homepage_sources, normalize_url
+from rfp_tracker.documents import classify_document, list_document_rows
 from rfp_tracker.keyword_matcher import score_text
-from rfp_tracker.models import Notice
+from rfp_tracker.models import Attachment, Notice
 from rfp_tracker.storage import connect, list_notices, update_notice_review, upsert_notice
 
 
@@ -78,6 +79,59 @@ class CompanyUtilityTests(unittest.TestCase):
             self.assertIn('"enabled": false', text)
             self.assertIn("Example Corp", text)
             self.assertNotIn("No Homepage", text)
+
+
+class DocumentIndexTests(unittest.TestCase):
+    def test_classifies_common_rfp_documents(self):
+        self.assertEqual(classify_document("RFP.pdf", "https://example.com/rfp.pdf"), "rfp")
+        self.assertEqual(classify_document("task order", "https://example.com/task-order.hwp"), "scope")
+        self.assertEqual(classify_document("submission forms", "https://example.com/forms.zip"), "forms")
+
+    def test_document_rows_include_missing_document_gap(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "tracker.db"
+            connection = connect(db_path)
+            upsert_notice(
+                connection,
+                Notice(
+                    source_id="sample",
+                    source_name="Sample",
+                    external_id="notice-with-doc",
+                    title="Climate RFP notice",
+                    url="https://example.com/notice-with-doc",
+                    relevance_score=6,
+                    matched_keywords=["climate", "rfp"],
+                    attachments=[
+                        Attachment(
+                            label="RFP PDF",
+                            url="https://example.com/files/climate-rfp.pdf",
+                            file_type="pdf",
+                        )
+                    ],
+                ),
+            )
+            upsert_notice(
+                connection,
+                Notice(
+                    source_id="sample",
+                    source_name="Sample",
+                    external_id="notice-without-doc",
+                    title="Climate scope notice",
+                    url="https://example.com/notice-without-doc",
+                    relevance_score=5,
+                    matched_keywords=["climate"],
+                ),
+            )
+
+            rows = list_document_rows(connection)
+            kinds = [row["document_kind"] for row in rows]
+            self.assertIn("rfp", kinds)
+            self.assertIn("missing", kinds)
+
+            rfp_rows = list_document_rows(connection, kind="rfp")
+            self.assertEqual(len(rfp_rows), 1)
+            self.assertEqual(rfp_rows[0]["document_url"], "https://example.com/files/climate-rfp.pdf")
+            connection.close()
 
 
 if __name__ == "__main__":

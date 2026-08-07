@@ -15,6 +15,12 @@ from .companies import (
     write_portal_candidates_csv,
 )
 from .config import enabled_sources, read_json
+from .documents import (
+    DOCUMENT_KIND_LABELS,
+    list_document_rows,
+    render_documents_report,
+    write_documents_csv,
+)
 from .fetchers import build_fetcher
 from .render import render_dashboard
 from .storage import (
@@ -135,6 +141,47 @@ def export_csv_command(args: argparse.Namespace) -> int:
                 ]
             )
     print(f"[done] CSV 생성: {out_path} ({len(rows)}건)")
+    return 0
+
+
+def rfp_documents_command(args: argparse.Namespace) -> int:
+    connection = connect(args.db)
+    rows = list_document_rows(
+        connection,
+        kind=args.kind,
+        status=args.status,
+        min_score=args.min_score,
+        include_missing=not args.hide_missing,
+    )
+    if args.limit:
+        rows = rows[: args.limit]
+    if not rows:
+        print("[documents] No document rows found.")
+        return 0
+
+    for row in rows:
+        document_url = row["document_url"] or "MISSING"
+        print(
+            f"[notice={row['notice_id']}] kind={row['document_kind']} "
+            f"status={row['review_status']} score={row['relevance_score']} "
+            f"title={row['notice_title']} document={row['document_label'] or document_url}"
+        )
+    return 0
+
+
+def render_documents_command(args: argparse.Namespace) -> int:
+    connection = connect(args.db)
+    rows = list_document_rows(
+        connection,
+        kind=args.kind,
+        status=args.status,
+        min_score=args.min_score,
+        include_missing=not args.hide_missing,
+    )
+    render_documents_report(rows, args.html)
+    write_documents_csv(rows, args.csv)
+    print(f"[done] RFP document HTML: {args.html} ({len(rows)} rows)")
+    print(f"[done] RFP document CSV: {args.csv} ({len(rows)} rows)")
     return 0
 
 
@@ -261,6 +308,25 @@ def build_parser() -> argparse.ArgumentParser:
     export_csv.add_argument("--db", default=str(ROOT_DIR / "data" / "rfp_tracker.db"))
     export_csv.add_argument("--out", default=str(ROOT_DIR / "reports" / "notices.csv"))
     export_csv.set_defaults(func=export_csv_command)
+
+    rfp_documents = subparsers.add_parser("rfp-documents", help="List collected RFP/document links")
+    rfp_documents.add_argument("--db", default=str(ROOT_DIR / "data" / "rfp_tracker.db"))
+    rfp_documents.add_argument("--kind", choices=sorted(DOCUMENT_KIND_LABELS))
+    rfp_documents.add_argument("--status", choices=sorted(VALID_REVIEW_STATUSES))
+    rfp_documents.add_argument("--min-score", type=int)
+    rfp_documents.add_argument("--limit", type=int, default=50)
+    rfp_documents.add_argument("--hide-missing", action="store_true")
+    rfp_documents.set_defaults(func=rfp_documents_command)
+
+    render_documents = subparsers.add_parser("render-documents", help="Create RFP/document HTML and CSV reports")
+    render_documents.add_argument("--db", default=str(ROOT_DIR / "data" / "rfp_tracker.db"))
+    render_documents.add_argument("--html", default=str(ROOT_DIR / "reports" / "rfp_documents.html"))
+    render_documents.add_argument("--csv", default=str(ROOT_DIR / "reports" / "rfp_documents.csv"))
+    render_documents.add_argument("--kind", choices=sorted(DOCUMENT_KIND_LABELS))
+    render_documents.add_argument("--status", choices=sorted(VALID_REVIEW_STATUSES))
+    render_documents.add_argument("--min-score", type=int)
+    render_documents.add_argument("--hide-missing", action="store_true")
+    render_documents.set_defaults(func=render_documents_command)
 
     sources = subparsers.add_parser("sources", help="수집 출처 목록 확인")
     sources.add_argument("--config", default=str(DEFAULT_CONFIG))

@@ -141,3 +141,19 @@ samples/
 tests/
   test_keyword_matcher.py    # 기본 테스트
 ```
+
+## RFP / task document index
+
+The tracker now creates a separate document-check report so RFPs and related files can be reviewed without opening each notice one by one.
+
+```powershell
+python -m rfp_tracker render-documents --db data\rfp_tracker.db --html reports\rfp_documents.html --csv reports\rfp_documents.csv
+python -m rfp_tracker rfp-documents --db data\rfp_tracker.db --limit 50
+```
+
+Generated outputs:
+
+- `reports/rfp_documents.html`: searchable browser report for RFP, task statement, notice, submission form, pricing and contract links
+- `reports/rfp_documents.csv`: Excel-ready document checklist
+
+Rows marked as `missing` mean the notice exists, but no RFP/task-document link has been collected yet. This can happen when a portal requires login, uses JavaScript, hides files behind a detail page, or needs a source-specific adapter.

@@ -247,4 +247,28 @@
 
 | Version | Date | Changes | Author |
 |---------|------|---------|--------|
+| 1.1 | 2026-08-07 | Added RFP/document index reports and CLI commands | Codex |
 | 1.0 | 2026-08-07 | Completion report created | Codex |
+
+## Post-MVP Update: RFP Document Index
+
+### What changed
+
+- Added document classification for RFP, task statement, bid notice, submission form, pricing, contract, other, and missing document links.
+- Added `reports/rfp_documents.html` for browser-based RFP document review.
+- Added `reports/rfp_documents.csv` for Excel-based document checklists.
+- Added `rfp-documents` and `render-documents` CLI commands.
+- Updated the daily PowerShell runner to generate document reports automatically.
+
+### Validation result
+
+| Check | Result |
+|-------|--------|
+| Python compile | PASS |
+| Unit tests | PASS: 7 tests |
+| Sample document report | PASS: 4 document rows |
+| Main local run | PASS: 5 notices, 6 document-check rows |
+
+### Remaining limitation
+
+The feature indexes document links that have already been collected. Actual live 나라장터/RFP document coverage still requires `DATA_GO_KR_SERVICE_KEY`, enabled live source configuration, and source-specific parsing for portals that hide files behind login, JavaScript, or detail pages.
