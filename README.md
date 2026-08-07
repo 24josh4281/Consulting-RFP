@@ -68,6 +68,28 @@ $env:DATA_GO_KR_SERVICE_KEY="발급받은_서비스키"
 - API 호출량 제한이 있으므로 처음에는 `--days 3`, `max_pages: 1`처럼 작게 테스트하세요.
 - 공고 원문/RFP/과업지시서 첨부파일은 사이트·API별 구조가 달라서, 2차 단계에서 출처별 상세 어댑터를 추가하는 방식이 안전합니다.
 
+## API 키와 대기업 포털 확장
+
+필요한 키와 국내 기업 포털 확장 절차는 [docs/API_KEYS_AND_COMPANY_PORTALS.md](docs/API_KEYS_AND_COMPANY_PORTALS.md)를 확인하세요.
+
+키 상태 확인:
+
+```powershell
+python -m rfp_tracker api-keys
+```
+
+KRX 공개 상장회사 목록 다운로드:
+
+```powershell
+python -m rfp_tracker companies-fetch-krx --out data\krx_listed_companies.csv
+```
+
+회사 홈페이지에서 구매/입찰/협력사 링크 후보 탐색:
+
+```powershell
+python -m rfp_tracker portal-discover --input data\krx_listed_companies.csv --out reports\portal_candidates.csv --limit 20
+```
+
 ## 민간 사이트 실제 연동
 
 민간 기업 입찰 사이트는 다음 이슈가 자주 있습니다.

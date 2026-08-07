@@ -2,6 +2,7 @@ import unittest
 import tempfile
 from pathlib import Path
 
+from rfp_tracker.companies import Company, generate_homepage_sources, normalize_url
 from rfp_tracker.keyword_matcher import score_text
 from rfp_tracker.models import Notice
 from rfp_tracker.storage import connect, list_notices, update_notice_review, upsert_notice
@@ -56,6 +57,27 @@ class StorageReviewTests(unittest.TestCase):
             self.assertEqual(rows[0]["review_status"], "interesting")
             self.assertEqual(rows[0]["review_note"], "제안 검토")
             connection.close()
+
+
+class CompanyUtilityTests(unittest.TestCase):
+    def test_normalize_homepage_url(self):
+        self.assertEqual(normalize_url("www.example.com"), "https://www.example.com")
+        self.assertEqual(normalize_url("https://example.com"), "https://example.com")
+
+    def test_generate_homepage_sources_is_disabled_by_default(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            out = Path(tmp_dir) / "sources.json"
+            generate_homepage_sources(
+                [
+                    Company(name="Example Corp", ticker="000001", homepage="https://example.com"),
+                    Company(name="No Homepage", ticker="000002", homepage=""),
+                ],
+                out,
+            )
+            text = out.read_text(encoding="utf-8")
+            self.assertIn('"enabled": false', text)
+            self.assertIn("Example Corp", text)
+            self.assertNotIn("No Homepage", text)
 
 
 if __name__ == "__main__":

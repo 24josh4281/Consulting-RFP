@@ -1,0 +1,28 @@
+{
+  "keys": [
+    {
+      "id": "data_go_kr",
+      "name": "공공데이터포털 서비스키",
+      "env": "DATA_GO_KR_SERVICE_KEY",
+      "required_for": [
+        "나라장터 입찰공고정보서비스",
+        "나라장터 공공데이터개방표준서비스"
+      ],
+      "apply_url": "https://www.data.go.kr/",
+      "notes": "회원가입 및 활용신청 후 발급. 코드/깃허브에 직접 저장하지 말고 환경변수로만 사용."
+    },
+    {
+      "id": "opendart",
+      "name": "OpenDART 인증키",
+      "env": "OPENDART_API_KEY",
+      "required_for": [
+        "상장/외감 기업 식별",
+        "재무제표 기반 자산총액 2조원 이상 후보 필터링",
+        "기업 공시/보고서 원문 수집"
+      ],
+      "apply_url": "https://opendart.fss.or.kr/uss/umt/EgovMberInsertView.do",
+      "notes": "금융감독원 OpenDART 회원가입/인증키 신청 필요."
+    }
+  ]
+}
+

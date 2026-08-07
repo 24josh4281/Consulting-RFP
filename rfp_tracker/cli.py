@@ -5,6 +5,15 @@ import csv
 import sys
 from pathlib import Path
 
+from .api_keys import get_api_key_status
+from .companies import (
+    discover_company_portals,
+    fetch_krx_listed_companies,
+    generate_homepage_sources,
+    read_companies_csv,
+    write_companies_csv,
+    write_portal_candidates_csv,
+)
 from .config import enabled_sources, read_json
 from .fetchers import build_fetcher
 from .render import render_dashboard
@@ -22,6 +31,8 @@ from .storage import (
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT_DIR / "configs" / "sources.example.json"
 DEFAULT_KEYWORDS = ROOT_DIR / "configs" / "keywords.json"
+DEFAULT_API_KEYS = ROOT_DIR / "configs" / "api_keys.example.json"
+DEFAULT_COMPANY_UNIVERSE = ROOT_DIR / "data" / "krx_listed_companies.csv"
 VALID_REVIEW_STATUSES = {
     "new",
     "watch",
@@ -179,6 +190,57 @@ def stats_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def api_keys_command(args: argparse.Namespace) -> int:
+    key_config = read_json(args.config)
+    statuses = get_api_key_status(key_config)
+    for status in statuses:
+        state = "PRESENT" if status.present else "MISSING"
+        required_for = "; ".join(status.required_for)
+        print(f"[{state}] {status.env} - {status.name}")
+        print(f"  required_for: {required_for}")
+        print(f"  apply_url: {status.apply_url}")
+        if status.notes:
+            print(f"  notes: {status.notes}")
+    return 0
+
+
+def companies_fetch_krx_command(args: argparse.Namespace) -> int:
+    companies = fetch_krx_listed_companies(timeout=args.timeout)
+    write_companies_csv(companies, args.out)
+    with_homepage = sum(1 for company in companies if company.homepage)
+    print(f"[done] KRX listed companies: {len(companies)} rows")
+    print(f"[done] Companies with homepage: {with_homepage} rows")
+    print(f"[done] Output: {args.out}")
+    print("[note] Asset >= 2T filtering requires OPENDART_API_KEY or validated KIND financial extract.")
+    return 0
+
+
+def company_sources_command(args: argparse.Namespace) -> int:
+    companies = read_companies_csv(args.input)
+    limit = None if args.limit <= 0 else args.limit
+    generate_homepage_sources(companies, args.out, limit=limit)
+    print(f"[done] Company homepage source config generated: {args.out}")
+    if limit:
+        print(f"[note] Limited to first {limit} companies with homepage.")
+    else:
+        print("[note] Generated for all companies with homepage in input CSV.")
+    return 0
+
+
+def portal_discover_command(args: argparse.Namespace) -> int:
+    companies = read_companies_csv(args.input)
+    candidates = discover_company_portals(companies, limit=args.limit, timeout=args.timeout)
+    write_portal_candidates_csv(candidates, args.out)
+    status_counts: dict[str, int] = {}
+    for candidate in candidates:
+        status_counts[candidate.status] = status_counts.get(candidate.status, 0) + 1
+    print(f"[done] Portal discovery output: {args.out}")
+    for status, count in sorted(status_counts.items()):
+        print(f"{status}={count}")
+    print("[note] Results are candidates only. Confirm site terms and permissions before enabling crawling.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Climate/GHG/ETS consulting RFP tracker")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -221,6 +283,37 @@ def build_parser() -> argparse.ArgumentParser:
     stats = subparsers.add_parser("stats", help="검토 상태별 공고 수 요약")
     stats.add_argument("--db", default=str(ROOT_DIR / "data" / "rfp_tracker.db"))
     stats.set_defaults(func=stats_command)
+
+    api_keys = subparsers.add_parser("api-keys", help="외부 API 키 환경변수 상태 확인")
+    api_keys.add_argument("--config", default=str(DEFAULT_API_KEYS))
+    api_keys.set_defaults(func=api_keys_command)
+
+    companies_fetch_krx = subparsers.add_parser(
+        "companies-fetch-krx",
+        help="KRX 공개 상장법인 목록을 CSV로 저장",
+    )
+    companies_fetch_krx.add_argument("--out", default=str(DEFAULT_COMPANY_UNIVERSE))
+    companies_fetch_krx.add_argument("--timeout", type=int, default=30)
+    companies_fetch_krx.set_defaults(func=companies_fetch_krx_command)
+
+    company_sources = subparsers.add_parser(
+        "company-sources",
+        help="회사 홈페이지 CSV에서 비활성 generic_html 소스 설정 생성",
+    )
+    company_sources.add_argument("--input", default=str(DEFAULT_COMPANY_UNIVERSE))
+    company_sources.add_argument("--out", default=str(ROOT_DIR / "configs" / "company_homepages.generated.json"))
+    company_sources.add_argument("--limit", type=int, default=100)
+    company_sources.set_defaults(func=company_sources_command)
+
+    portal_discover = subparsers.add_parser(
+        "portal-discover",
+        help="공개 회사 홈페이지에서 구매/입찰/협력사 링크 후보 탐색",
+    )
+    portal_discover.add_argument("--input", default=str(DEFAULT_COMPANY_UNIVERSE))
+    portal_discover.add_argument("--out", default=str(ROOT_DIR / "reports" / "portal_candidates.csv"))
+    portal_discover.add_argument("--limit", type=int, default=20)
+    portal_discover.add_argument("--timeout", type=int, default=15)
+    portal_discover.set_defaults(func=portal_discover_command)
 
     return parser
 

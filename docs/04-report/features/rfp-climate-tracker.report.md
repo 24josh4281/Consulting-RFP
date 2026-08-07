@@ -96,6 +96,7 @@
 | FR-06 | HTML/CSV 출력 | Complete | `reports/dashboard.html`, `reports/notices.csv` |
 | FR-07 | 공고 검토 상태/메모 관리 | Complete | `list`, `review`, `stats` |
 | FR-08 | 운영 스크립트 | Complete | `scripts/run_tracker.ps1` |
+| FR-09 | API 키 인벤토리와 대기업 포털 확장 준비 | Complete | `configs/api_keys.example.json`, `portal-discover` |
 
 ### 3.2 Non-Functional Requirements
 
@@ -116,6 +117,7 @@
 | Python package | `rfp_tracker/` | Complete |
 | Tests | `tests/test_keyword_matcher.py` | Complete |
 | Operations guide | `docs/OPERATIONS.md` | Complete |
+| API/portal expansion guide | `docs/API_KEYS_AND_COMPANY_PORTALS.md` | Complete |
 | Dashboard | `reports/dashboard.html` | Complete |
 | CSV | `reports/notices.csv` | Complete |
 

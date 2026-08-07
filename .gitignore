@@ -2,8 +2,11 @@ __pycache__/
 *.pyc
 .env
 .env.*
+!.env.example
 .bkit/
+configs/*.generated.json
 data/*.db
 data/*.db-*
+data/*.csv
 reports/*.html
 reports/*.csv
