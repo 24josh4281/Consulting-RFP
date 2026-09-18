@@ -15,6 +15,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_tracker.ps1 -Days 14
 - `reports/notices.csv`
 - `reports/rfp_documents.html`
 - `reports/rfp_documents.csv`
+- `reports/briefing.html`
+- `reports/briefing.md`
 
 ## 2. 공고 후보 검토
 
@@ -78,20 +80,60 @@ python -m rfp_tracker rfp-documents --db data\rfp_tracker.db --limit 50
 
 `missing`은 오류가 아니라 운영상 확인이 필요한 신호입니다. 사이트가 로그인, JavaScript, 상세 페이지 권한, 또는 별도 파일 API를 요구할 수 있습니다.
 
-## 4. Windows 작업 스케줄러 등록 방향
+## 4. 신규 공고 메일, 매일 17:00, 주간 브리핑
 
-처음에는 자동 등록보다 수동 등록을 권장합니다.
+수신자와 SMTP 정보가 없으면 메일은 보내지지 않습니다. 먼저 수신자를 로컬 설정에 저장하고, `.env`를 준비합니다.
 
-1. Windows “작업 스케줄러” 열기
-2. 기본 작업 만들기
-3. 트리거: 매일 또는 1시간마다
-4. 동작: 프로그램 시작
-5. 프로그램: `powershell.exe`
-6. 인수:
-
-```text
--ExecutionPolicy Bypass -File "B:\CODEX\RFP\scripts\run_tracker.ps1" -Days 14
+```powershell
+python -m rfp_tracker notifications setup --recipient "sejinkim@inng.co.kr"
+Copy-Item .env.example .env
+notepad .env
+python -m rfp_tracker notifications status --db data\rfp_tracker_official.db --config configs\notifications.local.json
 ```
+
+준비 상태에서 `smtp=MISSING`이 보이면 아래 값 중 누락된 것을 `.env`에 채워야 합니다.
+
+- `SMTP_HOST`
+- `SMTP_PORT` (일반적으로 `587`)
+- `SMTP_USERNAME`
+- `SMTP_PASSWORD` (가능하면 앱 비밀번호)
+- `SMTP_FROM`
+
+실제 수신 전에 테스트 메일을 한 번만 보냅니다.
+
+```powershell
+python -m rfp_tracker notifications dispatch --mode test --db data\rfp_tracker_official.db --config configs\notifications.local.json --send
+```
+
+테스트가 성공하면 알림 실행 스크립트를 먼저 미리보기로 확인합니다.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run_notification_cycle.ps1 -Mode immediate
+```
+
+`-Send`를 넣어야 실제 메일을 보냅니다. 이 스크립트는 수집, RFP 문서목록, 브리핑 생성, 메일 발송을 순서대로 실행합니다.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run_notification_cycle.ps1 -Mode immediate -Send
+```
+
+SMTP 테스트 후 다음 명령으로 Windows 작업 스케줄러를 등록할 수 있습니다.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install_notification_tasks.ps1 -Send
+```
+
+기본 일정은 다음과 같습니다.
+
+| 목적 | 일정 | 실제 메일 조건 |
+|------|------|----------------|
+| 신규 공고 | 30분마다 | 새로 수집된 관련 공고가 있을 때만 |
+| 일일 브리핑 | 매일 17:00 KST | 당일 집계가 아직 전송되지 않았을 때 |
+| 주간 브리핑 | 매주 금요일 18:00 KST | 해당 주 집계가 아직 전송되지 않았을 때 |
+
+첫 실행은 기준시각만 저장하므로 기존 공고를 신규 공고처럼 대량 발송하지 않습니다. "즉시"는 웹훅이 아닌 30분 폴링 기준입니다.
+
+공식 상세 수집용 기본 DB는 `data/rfp_tracker_official.db`입니다. 이전 범용 수집 결과가 남은 `data/rfp_tracker_live.db`는 보존되며, 두 결과를 섞지 않습니다.
 
 ## 5. 실제 나라장터 API 연결
 
@@ -126,7 +168,18 @@ python -m rfp_tracker doctor --config configs\sources.local.json
 powershell -ExecutionPolicy Bypass -File .\scripts\run_live_g2b_check.ps1 -Days 3
 ```
 
-## 6. 운영 주의사항
+## 6. 공식 출처 상태 확인
+
+```powershell
+python -m rfp_tracker sources --config configs\sources.local.json
+```
+
+- GIR 공개 입찰 게시판은 현재 상세 공고와 공개 RFP/과업 문서 링크 연결까지 확인되었습니다.
+- 나라장터는 서비스키가 있어야 API 수집을 시작합니다. 활성화 시 용역 공고를 환경·기후·온실가스·배출권·ETS·LCA·탄소발자국·환경영향평가 기준으로 필터링합니다.
+- 환경부 및 민간 포털은 이용 정책과 페이지 구조 검토 전까지 비활성화로 둡니다.
+- 출처 전체 현황은 `docs/SOURCE_CATALOG_STATUS.md`를 확인하세요.
+
+## 7. 운영 주의사항
 
 - 민간 사이트는 약관과 로그인 권한 확인 전 기본 비활성화 상태를 유지하세요.
 - 첨부파일 대량 다운로드는 별도 승인 후 구현하는 것이 안전합니다.

@@ -137,7 +137,7 @@ SyncRun 1 ── N Notice candidates during run
 
 ### 4.2 External API
 
-나라장터는 `BidPublicInfoService02` 계열의 공공데이터 OpenAPI를 사용하도록 준비한다. 서비스키는 `DATA_GO_KR_SERVICE_KEY` 환경변수로만 읽는다.
+나라장터는 공식 `ad/BidPublicInfoService` 용역 오퍼레이션을 사용하도록 준비한다. 현재 목록 주소는 `https://apis.data.go.kr/1230000/ad/BidPublicInfoService/getBidPblancListInfoServc`이며, 서비스키는 `serviceKey` 파라미터로 전달하되 값은 `DATA_GO_KR_SERVICE_KEY` 환경변수에서만 읽는다.
 
 ---
 
@@ -283,4 +283,3 @@ samples/
 | Version | Date | Changes | Author |
 |---------|------|---------|--------|
 | 0.1 | 2026-08-07 | Initial MVP design | Codex |
-

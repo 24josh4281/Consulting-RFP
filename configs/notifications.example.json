@@ -1,0 +1,10 @@
+{
+  "recipients": [
+    "alerts@example.com"
+  ],
+  "min_relevance_score": 3,
+  "timezone": "Asia/Seoul",
+  "daily_send_at": "17:00",
+  "weekly_send_day": "FRI",
+  "weekly_send_at": "18:00"
+}

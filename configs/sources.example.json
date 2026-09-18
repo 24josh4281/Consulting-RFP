@@ -15,18 +15,46 @@
     },
     {
       "id": "g2b_service_bids",
-      "name": "나라장터 입찰공고정보서비스 - 용역",
+      "name": "나라장터 용역 - 환경·기후·온실가스·ETS",
       "type": "g2b_bid_api",
       "enabled": false,
-      "endpoint": "http://apis.data.go.kr/1230000/BidPublicInfoService02/getBidPblancListInfoServc",
+      "endpoint": "https://apis.data.go.kr/1230000/ad/BidPublicInfoService/getBidPblancListInfoServc",
+      "portal_url": "https://www.g2b.go.kr/",
+      "authority": "official",
+      "priority": "P0",
+      "max_pages": 5,
       "service_key_env": "DATA_GO_KR_SERVICE_KEY",
-      "service_key_param": "ServiceKey",
+      "service_key_param": "serviceKey",
       "default_params": {
         "inqryDiv": "1",
         "type": "json",
         "numOfRows": "100"
       },
-      "notes": "공공데이터포털 서비스키 필요. 최초 운영 전 활용신청과 호출량 제한 확인."
+      "notes": "나라장터 용역 공고를 공식 API로 읽은 뒤 환경·기후·온실가스·배출권·ETS·LCA·탄소발자국·환경영향평가 키워드로 로컬 필터링합니다. 공공데이터포털 서비스키 필요. 1회 최대 5페이지(500건)만 읽어 개발계정 호출량을 보호합니다."
+    },
+    {
+      "id": "gir_bid_notices",
+      "name": "온실가스종합정보센터 입찰공고",
+      "type": "official_board_html",
+      "enabled": false,
+      "url": "https://www.gir.go.kr/home/board/list.do?boardMasterId=6&menuId=14",
+      "authority": "official",
+      "priority": "P0",
+      "detail_url_contains": "/home/board/read.do",
+      "detail_title_prefix": "[입찰]",
+      "max_detail_pages": 10,
+      "detail_delay_seconds": 0.2,
+      "notes": "온실가스·배출권거래제·MRV 관련 공식 입찰 게시판. 공개 상세 화면과 공개 첨부 링크만 제한적으로 수집합니다."
+    },
+    {
+      "id": "me_contract_bids",
+      "name": "환경부 계약·입찰 게시판",
+      "type": "generic_html",
+      "enabled": false,
+      "url": "https://www.me.go.kr/home/web/board/list.do?menuId=290&boardMasterId=39",
+      "authority": "official",
+      "priority": "P0",
+      "notes": "기후·환경 중앙부처의 공식 게시판 후보. 실제 활성화 전 목록 구조와 이용 정책을 확인합니다."
     },
     {
       "id": "samsung_fire_nbuy",
@@ -54,4 +82,3 @@
     }
   ]
 }
-

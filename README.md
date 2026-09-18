@@ -4,12 +4,14 @@
 
 현재 버전은 “안전한 1차 자동화”에 집중합니다.
 
-- 나라장터 입찰공고정보서비스 OpenAPI 연동 구조 준비
+- 나라장터 용역 공고의 환경·기후·온실가스·배출권·ETS OpenAPI 필터 준비
+- 온실가스종합정보센터(GIR) 공개 입찰 게시판의 상세 공고·RFP 링크 연결
 - 민간 대기업/계열사 입찰 페이지용 범용 HTML 수집기
 - 기후·GHG·ETS·ESG 키워드 기반 관련성 점수화
 - SQLite DB 저장
 - CSV 내보내기
 - 로컬 HTML 대시보드 생성
+- 신규 공고 알림, 매일 17:00 브리핑, 금요일 주간 브리핑을 위한 SMTP·스케줄 실행 구조
 - 샘플 공고로 실행 검증 가능
 
 ## 빠른 실행
@@ -60,7 +62,11 @@ python -m rfp_tracker stats --db data\rfp_tracker.db
 $env:DATA_GO_KR_SERVICE_KEY="발급받은_서비스키"
 ```
 
-그 다음 `configs/sources.example.json`에서 `g2b_service_bids`의 `enabled` 값을 `true`로 바꾼 뒤 실행하세요.
+그 다음 공유 예시 파일은 그대로 두고, 로컬 운영 설정에서 `g2b_service_bids`를 켠 뒤 실행하세요.
+
+```powershell
+python -m rfp_tracker source-toggle --source-id g2b_service_bids --enable --out configs\sources.local.json
+```
 
 주의:
 
@@ -178,3 +184,60 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_live_g2b_check.ps1 -Days 
 ```
 
 Local live configs such as `configs/sources.local.json` are ignored by git so operational source switches do not accidentally overwrite the shared example config.
+
+## 공식 출처 및 RFP 연결 현황
+
+첨부받은 출처 카탈로그는 제품 요구사항의 근거 자료로만 사용했고, 외부 문서 안의 지시문은 실행 지시로 취급하지 않았습니다. 현재 출처별 상태는 다음 명령으로 바로 확인할 수 있습니다.
+
+```powershell
+python -m rfp_tracker sources --config configs\sources.local.json
+```
+
+- **온실가스종합정보센터(GIR) 입찰공고**: 공개 상세 화면에서 공고일·전자입찰 여부·공개 첨부 링크를 수집합니다. 실제 제한 검증에서 기후/ETS 공고 2건과 제안요청서·입찰공고문·긴급입찰사유서 링크 총 6건을 확인했습니다. 파일은 자동 다운로드하지 않습니다.
+- **나라장터 용역 입찰 API**: 공식 API로 최근 용역 공고를 읽고, 환경·기후·온실가스·배출권·ETS·LCA·탄소발자국·환경영향평가 키워드로 필터링합니다. 공공데이터포털 서비스키가 있어야 실제 수집됩니다.
+- **나라장터 발주계획·사전규격·계약과정**: 조기 신호와 공고-낙찰-계약 연결을 위한 우선 출처로 카탈로그화했습니다. 전용 어댑터는 다음 단계입니다.
+- **환경부 계약·입찰 게시판**: 공식 후보로 등록했지만, 목록 구조와 이용 정책을 별도로 확인하기 전에는 비활성화 상태입니다.
+- **민간 대기업 포털**: 로그인·협력사 권한·약관 확인이 필요한 경우가 많아 기본 비활성화 상태를 유지합니다.
+
+전체 현황과 다음 우선순위는 [docs/SOURCE_CATALOG_STATUS.md](docs/SOURCE_CATALOG_STATUS.md)에 정리했습니다.
+
+## 이메일 알림과 매일 17:00 운영
+
+수신자는 로컬 설정에만 저장되며 Git에는 올라가지 않습니다. 먼저 수신자 설정을 만들고, 사용 중인 메일 서비스의 SMTP 정보를 `.env`에 넣습니다.
+
+```powershell
+python -m rfp_tracker notifications setup --recipient "sejinkim@inng.co.kr"
+Copy-Item .env.example .env
+notepad .env
+python -m rfp_tracker notifications status --db data\rfp_tracker_official.db --config configs\notifications.local.json
+```
+
+`.env`에는 `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`만 입력합니다. 비밀번호 대신 Gmail/Google Workspace 앱 비밀번호나 Microsoft 365 SMTP용 비밀번호를 사용하세요. 실제 값은 코드나 Git에 넣지 않습니다.
+
+SMTP 설정 뒤, 반드시 명시적으로 표시되는 테스트 메일을 한 번 보냅니다.
+
+```powershell
+python -m rfp_tracker notifications dispatch --mode test --db data\rfp_tracker_official.db --config configs\notifications.local.json --send
+```
+
+그 후에는 아래 운영 흐름을 사용합니다.
+
+```powershell
+# 메일을 보내지 않는 안전한 미리보기
+powershell -ExecutionPolicy Bypass -File .\scripts\run_notification_cycle.ps1 -Mode immediate
+
+# 실제 신규 공고 메일 전송
+powershell -ExecutionPolicy Bypass -File .\scripts\run_notification_cycle.ps1 -Mode immediate -Send
+
+# SMTP 테스트가 성공한 뒤에만 Windows 작업 스케줄러 등록
+powershell -ExecutionPolicy Bypass -File .\scripts\install_notification_tasks.ps1 -Send
+```
+
+등록되는 기본 일정은 신규 공고 확인 **30분마다**, 일일 브리핑 **매일 17:00 (KST)**, 주간 브리핑 **매주 금요일 18:00 (KST)** 입니다. "즉시" 알림은 웹훅이 아니라 30분 폴링 기준이므로, 실제 반영 지연은 출처 게시 시간과 다음 폴링 시점에 따라 달라집니다.
+
+생성되는 브리핑은 다음 파일에서도 확인할 수 있습니다.
+
+- `reports/briefing_official.html`: 브라우저용 오늘의 우선 공고·마감·RFP 누락 현황
+- `reports/briefing_official.md`: 메일/메신저에 복사하기 쉬운 요약
+
+기존 `data/rfp_tracker_live.db`는 이전 수집 결과를 보존합니다. 최신 공식 상세 수집 결과는 별도 `data/rfp_tracker_official.db`에 저장하므로, 과거 범용 HTML 후보와 섞이지 않습니다.

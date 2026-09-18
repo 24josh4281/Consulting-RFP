@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from .api_keys import get_api_key_status
+from .briefing import build_briefing, render_briefing_html, write_briefing_markdown
 from .companies import (
     discover_company_portals,
     fetch_krx_listed_companies,
@@ -22,6 +23,13 @@ from .documents import (
     write_documents_csv,
 )
 from .fetchers import build_fetcher
+from .notifications import (
+    dispatch_notifications,
+    initialize_baseline,
+    notification_status,
+    read_notification_config,
+    write_notification_config,
+)
 from .render import render_dashboard
 from .storage import (
     connect,
@@ -40,6 +48,7 @@ DEFAULT_LOCAL_CONFIG = ROOT_DIR / "configs" / "sources.local.json"
 DEFAULT_KEYWORDS = ROOT_DIR / "configs" / "keywords.json"
 DEFAULT_API_KEYS = ROOT_DIR / "configs" / "api_keys.example.json"
 DEFAULT_COMPANY_UNIVERSE = ROOT_DIR / "data" / "krx_listed_companies.csv"
+DEFAULT_NOTIFICATION_CONFIG = ROOT_DIR / "configs" / "notifications.local.json"
 VALID_REVIEW_STATUSES = {
     "new",
     "watch",
@@ -186,11 +195,115 @@ def render_documents_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def briefing_command(args: argparse.Namespace) -> int:
+    connection = connect(args.db)
+    briefing = build_briefing(
+        connection,
+        due_days=args.due_days,
+        min_score=args.min_score,
+        limit=args.limit,
+    )
+    render_briefing_html(briefing, args.html)
+    write_briefing_markdown(briefing, args.markdown)
+    summary = briefing["summary"]
+    print(f"[done] 브리핑 HTML: {args.html}")
+    print(f"[done] 브리핑 Markdown: {args.markdown}")
+    print(
+        "[summary] "
+        f"전체={summary['total_notices']} 기준점수이상={summary['eligible_notices']} "
+        f"오늘신규={summary['new_today']} D-{args.due_days}이내={summary['urgent']} "
+        f"문서미수집={summary['missing_documents']}"
+    )
+    return 0
+
+
+def _notification_recipients(args: argparse.Namespace, config: dict) -> list[str]:
+    explicit = getattr(args, "recipient", None)
+    return explicit if explicit else list(config.get("recipients", []))
+
+
+def notifications_status_command(args: argparse.Namespace) -> int:
+    config = read_notification_config(args.config)
+    connection = connect(args.db)
+    status = notification_status(connection, config)
+    print("Climate RFP email notification readiness")
+    print(f"config={args.config}")
+    print(f"recipients={', '.join(status['recipients']) or 'MISSING'}")
+    print(f"baseline_at={status['baseline_at'] or 'NOT_INITIALIZED'}")
+    print(f"daily_send_at={status['daily_send_at']} KST")
+    print(f"weekly={status['weekly_send_day']} {status['weekly_send_at']} KST")
+    smtp_state = "READY" if status["smtp_ready"] else "MISSING"
+    print(f"smtp={smtp_state}")
+    if status["smtp_missing"]:
+        print("smtp_missing=" + ", ".join(status["smtp_missing"]))
+    if args.strict and (not status["recipients"] or not status["smtp_ready"]):
+        return 1
+    return 0
+
+
+def notifications_init_command(args: argparse.Namespace) -> int:
+    connection = connect(args.db)
+    baseline_at, created = initialize_baseline(connection)
+    state = "created" if created else "already_exists"
+    print(f"[done] notification baseline {state}: {baseline_at}")
+    print("[note] 이 시각 이전에 수집된 공고는 신규 즉시알림으로 보내지지 않습니다.")
+    return 0
+
+
+def notifications_setup_command(args: argparse.Namespace) -> int:
+    try:
+        write_notification_config(args.out, args.recipient, overwrite=args.overwrite)
+    except (FileExistsError, ValueError) as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return 2
+    print(f"[done] Local notification config created: {args.out}")
+    print("[note] SMTP credential values still belong in .env and are not written to this file.")
+    return 0
+
+
+def notifications_dispatch_command(args: argparse.Namespace) -> int:
+    config = read_notification_config(args.config)
+    recipients = _notification_recipients(args, config)
+    if not recipients:
+        print("[error] No valid email recipient. Run notifications setup or pass --recipient.", file=sys.stderr)
+        return 2
+
+    connection = connect(args.db)
+    try:
+        results = dispatch_notifications(
+            connection,
+            recipients=recipients,
+            mode=args.mode,
+            min_score=args.min_score if args.min_score is not None else int(config["min_relevance_score"]),
+            daily_send_at=str(config["daily_send_at"]),
+            send=args.send,
+        )
+    except ValueError as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return 2
+
+    failed = False
+    for result in results:
+        print(
+            f"[notification] recipient={result.recipient} mode={result.mode} "
+            f"planned={result.planned} sent={result.sent} skipped={result.skipped} failed={result.failed} "
+            f"baseline_initialized={result.baseline_initialized} message={result.message}"
+        )
+        failed = failed or bool(result.failed)
+    return 1 if failed else 0
+
+
 def sources_command(args: argparse.Namespace) -> int:
     source_config = read_json(args.config)
     for source in source_config.get("sources", []):
         state = "ON " if source.get("enabled") else "OFF"
-        print(f"[{state}] {source['id']} - {source['name']} ({source['type']})")
+        metadata = []
+        if source.get("priority"):
+            metadata.append(f"priority={source['priority']}")
+        if source.get("authority"):
+            metadata.append(f"authority={source['authority']}")
+        suffix = f" | {', '.join(metadata)}" if metadata else ""
+        print(f"[{state}] {source['id']} - {source['name']} ({source['type']}){suffix}")
     return 0
 
 
@@ -385,6 +498,43 @@ def build_parser() -> argparse.ArgumentParser:
     render_documents.add_argument("--min-score", type=int)
     render_documents.add_argument("--hide-missing", action="store_true")
     render_documents.set_defaults(func=render_documents_command)
+
+    briefing = subparsers.add_parser("briefing", help="Create daily climate RFP briefing HTML and Markdown")
+    briefing.add_argument("--db", default=str(ROOT_DIR / "data" / "rfp_tracker.db"))
+    briefing.add_argument("--html", default=str(ROOT_DIR / "reports" / "briefing.html"))
+    briefing.add_argument("--markdown", default=str(ROOT_DIR / "reports" / "briefing.md"))
+    briefing.add_argument("--due-days", type=int, default=7)
+    briefing.add_argument("--min-score", type=int, default=3)
+    briefing.add_argument("--limit", type=int, default=20)
+    briefing.set_defaults(func=briefing_command)
+
+    notifications = subparsers.add_parser("notifications", help="Configure, preview, and send email alerts")
+    notification_commands = notifications.add_subparsers(dest="notification_command", required=True)
+
+    notifications_status = notification_commands.add_parser("status", help="Check email notification readiness")
+    notifications_status.add_argument("--db", default=str(ROOT_DIR / "data" / "rfp_tracker.db"))
+    notifications_status.add_argument("--config", default=str(DEFAULT_NOTIFICATION_CONFIG))
+    notifications_status.add_argument("--strict", action="store_true")
+    notifications_status.set_defaults(func=notifications_status_command)
+
+    notifications_init = notification_commands.add_parser("init", help="Set the no-history baseline for new notice alerts")
+    notifications_init.add_argument("--db", default=str(ROOT_DIR / "data" / "rfp_tracker.db"))
+    notifications_init.set_defaults(func=notifications_init_command)
+
+    notifications_setup = notification_commands.add_parser("setup", help="Create a local recipient configuration")
+    notifications_setup.add_argument("--out", default=str(DEFAULT_NOTIFICATION_CONFIG))
+    notifications_setup.add_argument("--recipient", action="append", required=True)
+    notifications_setup.add_argument("--overwrite", action="store_true")
+    notifications_setup.set_defaults(func=notifications_setup_command)
+
+    notifications_dispatch = notification_commands.add_parser("dispatch", help="Preview or send immediate/daily/weekly emails")
+    notifications_dispatch.add_argument("--db", default=str(ROOT_DIR / "data" / "rfp_tracker.db"))
+    notifications_dispatch.add_argument("--config", default=str(DEFAULT_NOTIFICATION_CONFIG))
+    notifications_dispatch.add_argument("--recipient", action="append")
+    notifications_dispatch.add_argument("--mode", choices=["immediate", "daily", "weekly", "test"], required=True)
+    notifications_dispatch.add_argument("--min-score", type=int)
+    notifications_dispatch.add_argument("--send", action="store_true", help="Actually send mail through configured SMTP")
+    notifications_dispatch.set_defaults(func=notifications_dispatch_command)
 
     sources = subparsers.add_parser("sources", help="수집 출처 목록 확인")
     sources.add_argument("--config", default=str(DEFAULT_CONFIG))

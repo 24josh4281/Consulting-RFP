@@ -5,7 +5,9 @@ param(
   [string]$Dashboard = "reports\dashboard.html",
   [string]$Csv = "reports\notices.csv",
   [string]$DocumentsHtml = "reports\rfp_documents.html",
-  [string]$DocumentsCsv = "reports\rfp_documents.csv"
+  [string]$DocumentsCsv = "reports\rfp_documents.csv",
+  [string]$BriefingHtml = "reports\briefing.html",
+  [string]$BriefingMarkdown = "reports\briefing.md"
 )
 
 $ErrorActionPreference = "Stop"
@@ -28,4 +30,5 @@ Invoke-Checked { python -m rfp_tracker sync --config $Config --db $Database --da
 Invoke-Checked { python -m rfp_tracker render --db $Database --out $Dashboard } "render"
 Invoke-Checked { python -m rfp_tracker export-csv --db $Database --out $Csv } "export-csv"
 Invoke-Checked { python -m rfp_tracker render-documents --db $Database --html $DocumentsHtml --csv $DocumentsCsv } "render-documents"
+Invoke-Checked { python -m rfp_tracker briefing --db $Database --html $BriefingHtml --markdown $BriefingMarkdown } "briefing"
 Invoke-Checked { python -m rfp_tracker stats --db $Database } "stats"

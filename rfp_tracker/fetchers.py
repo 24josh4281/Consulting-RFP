@@ -3,15 +3,16 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import time
 from datetime import datetime, timedelta
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode, urljoin
+from urllib.parse import urlencode, urljoin, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
-from .keyword_matcher import extension_from_url, has_any_term, normalize_text, score_text
+from .keyword_matcher import extension_from_url, has_any_term, is_excluded, normalize_text, score_text
 from .models import Attachment, Notice
 
 
@@ -58,8 +59,15 @@ def parse_links(html: str, base_url: str = "") -> list[dict[str, str]]:
         href = link["href"].strip()
         if not href or href.startswith(("javascript:", "mailto:", "tel:")):
             continue
-        resolved.append({"url": urljoin(base_url, href), "text": link["text"].strip()})
+        resolved.append({"url": canonical_url(urljoin(base_url, href)), "text": link["text"].strip()})
     return resolved
+
+
+def canonical_url(url: str) -> str:
+    """Remove volatile servlet session IDs so the same board notice keeps one stable ID."""
+    parsed = urlsplit(url)
+    path = re.sub(r";jsessionid=[^/?#]+", "", parsed.path, flags=re.IGNORECASE)
+    return urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, ""))
 
 
 def stable_id(*parts: str) -> str:
@@ -99,8 +107,11 @@ class GenericHtmlFetcher(BaseFetcher):
 
         for link in links:
             title = link["text"] or link["url"]
-            file_type = extension_from_url(link["url"])
-            match = score_text(f"{title} {link['url']}", self.keyword_config)
+            file_type = extension_from_url(link["url"]) or extension_from_url(title)
+            combined_link_text = f"{title} {link['url']}"
+            if is_excluded(combined_link_text, self.keyword_config):
+                continue
+            match = score_text(combined_link_text, self.keyword_config)
             looks_like_document = bool(file_type) or has_any_term(title, document_terms)
             if file_type and last_relevant_notice is not None:
                 last_relevant_notice.attachments.append(
@@ -125,7 +136,11 @@ class GenericHtmlFetcher(BaseFetcher):
                 relevance_score=match.score,
                 matched_keywords=match.keywords,
                 attachments=attachment,
-                raw={"source_type": self.source["type"]},
+                raw={
+                    "source_type": self.source["type"],
+                    "source_url": base_url,
+                    "fetched_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                },
             )
             notices.append(notice)
             last_relevant_notice = notice
@@ -139,6 +154,131 @@ class GenericHtmlFetcher(BaseFetcher):
         timeout = int(self.global_config.get("request_timeout_seconds", 20))
         user_agent = self.global_config.get("user_agent", "ClimateRfpTracker/0.1")
         return fetch_text(self.source["url"], timeout=timeout, user_agent=user_agent)
+
+
+class OfficialBoardFetcher(GenericHtmlFetcher):
+    """Fetch a public official notice board and its limited detail pages/attachments.
+
+    This adapter intentionally avoids authenticated pages and downloads no files. It only follows
+    public notice-detail links and records the public attachment URLs for consultant review.
+    """
+
+    def fetch(self, days: int) -> list[Notice]:
+        listing_html = self._load_html()
+        listing_url = self.source.get("url", "")
+        detail_marker = str(self.source.get("detail_url_contains", ""))
+        title_prefix = str(self.source.get("detail_title_prefix", ""))
+        max_details = int(self.source.get("max_detail_pages", 10))
+        min_score = int(self.keyword_config.get("min_relevance_score", 2))
+        candidates: list[dict[str, str]] = []
+        seen_urls: set[str] = set()
+
+        for link in parse_links(listing_html, listing_url):
+            title = link["text"] or link["url"]
+            if detail_marker and detail_marker not in link["url"]:
+                continue
+            if title_prefix and not title.startswith(title_prefix):
+                continue
+            combined = f"{title} {link['url']}"
+            if link["url"] in seen_urls or is_excluded(combined, self.keyword_config):
+                continue
+            match = score_text(combined, self.keyword_config)
+            if match.score < min_score or not has_domain_keyword(match.keywords, self.keyword_config):
+                continue
+            seen_urls.add(link["url"])
+            candidates.append(link)
+            if len(candidates) >= max_details:
+                break
+
+        notices: list[Notice] = []
+        timeout = int(self.global_config.get("request_timeout_seconds", 20))
+        user_agent = self.global_config.get("user_agent", "ClimateRfpTracker/0.1")
+        for link in candidates:
+            detail_html = fetch_text(link["url"], timeout=timeout, user_agent=user_agent)
+            detail_text = html_to_text(detail_html)
+            metadata = board_metadata(detail_text)
+            if not self._within_days(metadata["published_at"], days):
+                continue
+            combined = f"{link['text']} {detail_text}"
+            if is_excluded(combined, self.keyword_config):
+                continue
+            match = score_text(combined, self.keyword_config)
+            if match.score < min_score or not has_domain_keyword(match.keywords, self.keyword_config):
+                continue
+
+            notices.append(
+                Notice(
+                    source_id=self.source["id"],
+                    source_name=self.source["name"],
+                    external_id=stable_id(self.source["id"], link["url"], link["text"]),
+                    title=link["text"],
+                    url=link["url"],
+                    published_at=metadata["published_at"],
+                    buyer=metadata["buyer"],
+                    procurement_method=metadata["procurement_method"],
+                    category="official_board_html",
+                    relevance_score=match.score,
+                    matched_keywords=match.keywords,
+                    attachments=self._detail_attachments(detail_html, link["url"]),
+                    raw={
+                        "source_type": self.source["type"],
+                        "source_url": listing_url,
+                        "detail_url": link["url"],
+                        "fetched_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                        "detail_sha256": hashlib.sha256(detail_html.encode("utf-8")).hexdigest(),
+                    },
+                )
+            )
+            time.sleep(float(self.source.get("detail_delay_seconds", 0.2)))
+        return notices
+
+    def _detail_attachments(self, detail_html: str, detail_url: str) -> list[Attachment]:
+        attachments: list[Attachment] = []
+        seen_urls: set[str] = set()
+        for link in parse_links(detail_html, detail_url):
+            label = link["text"] or link["url"]
+            file_type = extension_from_url(link["url"]) or extension_from_url(label)
+            looks_like_document = bool(file_type) or has_any_term(label, self.keyword_config.get("document_terms", []))
+            if not looks_like_document or link["url"] in seen_urls:
+                continue
+            seen_urls.add(link["url"])
+            attachments.append(Attachment(label=label, url=link["url"], file_type=file_type))
+        return attachments
+
+    @staticmethod
+    def _within_days(published_at: str, days: int) -> bool:
+        if not published_at:
+            return True
+        try:
+            published = datetime.strptime(published_at, "%Y-%m-%d")
+        except ValueError:
+            return True
+        return (datetime.now() - published).days <= days
+
+
+class TextExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.parts: list[str] = []
+
+    def handle_data(self, data: str) -> None:
+        if data.strip():
+            self.parts.append(data.strip())
+
+
+def html_to_text(html: str) -> str:
+    parser = TextExtractor()
+    parser.feed(html)
+    return "\n".join(parser.parts)
+
+
+def board_metadata(text: str) -> dict[str, str]:
+    published_match = re.search(r"등록일\s*[:：]?\s*(20\d{2}[./-]\d{1,2}[./-]\d{1,2})", text)
+    buyer_match = re.search(r"등록자\s*[:：]?\s*([^\n]{1,80})", text)
+    published_at = published_match.group(1).replace(".", "-").replace("/", "-") if published_match else ""
+    buyer = buyer_match.group(1).strip() if buyer_match else ""
+    procurement_method = "전자입찰" if "전자입찰" in text else ""
+    return {"published_at": published_at, "buyer": buyer, "procurement_method": procurement_method}
 
 
 class G2BBidApiFetcher(BaseFetcher):
@@ -164,7 +304,7 @@ class G2BBidApiFetcher(BaseFetcher):
                     "inqryBgnDt": begin,
                     "inqryEndDt": end,
                     "pageNo": str(page_no),
-                    self.source.get("service_key_param", "ServiceKey"): service_key,
+                    self.source.get("service_key_param", "serviceKey"): service_key,
                 }
             )
             url = self.source["endpoint"] + "?" + urlencode(params)
@@ -184,9 +324,20 @@ class G2BBidApiFetcher(BaseFetcher):
             print("[warn] 나라장터 응답이 JSON 형식이 아닙니다. API키/권한/응답 포맷을 확인하세요.")
             return []
 
+        api_error = data.get("OpenAPI_ServiceResponse", {}).get("cmmMsgHeader", {})
+        if api_error:
+            reason = str(api_error.get("returnReasonCode") or "unknown")
+            message = str(api_error.get("errMsg") or "unknown error")
+            print(f"[warn] 나라장터 API 응답 오류({reason}): {message}")
+            return []
+
         items = data.get("response", {}).get("body", {}).get("items", [])
+        if isinstance(items, dict) and "item" in items:
+            items = items.get("item", [])
         if isinstance(items, dict):
             items = [items]
+        if not isinstance(items, list):
+            return []
         notices: list[Notice] = []
         min_score = int(self.keyword_config.get("min_relevance_score", 2))
 
@@ -195,6 +346,8 @@ class G2BBidApiFetcher(BaseFetcher):
             if not title:
                 continue
             combined_text = " ".join(str(value) for value in item.values() if value is not None)
+            if is_excluded(combined_text, self.keyword_config):
+                continue
             match = score_text(combined_text, self.keyword_config)
             if match.score < min_score or not has_domain_keyword(match.keywords, self.keyword_config):
                 continue
@@ -244,6 +397,8 @@ def build_fetcher(source: dict[str, Any], keyword_config: dict[str, Any], global
     source_type = source.get("type")
     if source_type in {"generic_html", "sample_html"}:
         return GenericHtmlFetcher(source, keyword_config, global_config, root_dir)
+    if source_type == "official_board_html":
+        return OfficialBoardFetcher(source, keyword_config, global_config, root_dir)
     if source_type == "g2b_bid_api":
         return G2BBidApiFetcher(source, keyword_config, global_config, root_dir)
     raise ValueError(f"지원하지 않는 source type입니다: {source_type}")

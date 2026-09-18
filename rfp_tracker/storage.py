@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -53,6 +54,30 @@ CREATE TABLE IF NOT EXISTS sync_runs (
   status TEXT NOT NULL,
   message TEXT
 );
+
+CREATE TABLE IF NOT EXISTS notification_settings (
+  setting_key TEXT PRIMARY KEY,
+  setting_value TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS notification_deliveries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  notification_type TEXT NOT NULL,
+  notification_key TEXT NOT NULL,
+  notice_id INTEGER,
+  recipient TEXT NOT NULL,
+  subject TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL,
+  sent_at TEXT,
+  error TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  UNIQUE(notification_type, notification_key, recipient),
+  FOREIGN KEY(notice_id) REFERENCES notices(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_notification_deliveries_lookup
+ON notification_deliveries(notification_type, notification_key, recipient, status);
 """
 
 
@@ -185,7 +210,55 @@ def upsert_notice(connection: sqlite3.Connection, notice: Notice) -> bool:
         notice_id = int(cursor.lastrowid)
         changed = True
 
+    _upsert_attachments(connection, notice_id, notice)
+
+    connection.commit()
+    return changed
+
+
+def _attachment_identity(label: str, url: str) -> str:
+    """Make public download URLs stable when a portal rotates its token parameter."""
+    normalized_label = re.sub(r"\s+", " ", label or "").strip().casefold()
+    file_sequence_match = re.search(r"(?:[?&]fileSeq=)([^&#]+)", url or "", flags=re.IGNORECASE)
+    file_sequence = file_sequence_match.group(1) if file_sequence_match else ""
+    return f"{normalized_label}|{file_sequence}" if normalized_label else f"url|{url}"
+
+
+def _upsert_attachments(connection: sqlite3.Connection, notice_id: int, notice: Notice) -> None:
+    """Refresh collected attachment URLs without duplicating tokenized official downloads.
+
+    Review fields live on ``notices`` and are never affected here. Existing files that a
+    source did not return in this one run are retained; only exact duplicate auto-collected
+    attachment identities are consolidated.
+    """
+    existing_by_identity: dict[str, sqlite3.Row] = {}
+    duplicate_ids: list[int] = []
+    for row in connection.execute(
+        "SELECT id, label, url, file_type FROM attachments WHERE notice_id = ? ORDER BY id",
+        (notice_id,),
+    ).fetchall():
+        identity = _attachment_identity(str(row["label"]), str(row["url"]))
+        if identity in existing_by_identity:
+            duplicate_ids.append(int(row["id"]))
+        else:
+            existing_by_identity[identity] = row
+
+    for attachment_id in duplicate_ids:
+        connection.execute("DELETE FROM attachments WHERE id = ?", (attachment_id,))
+
     for attachment in notice.attachments:
+        identity = _attachment_identity(attachment.label, attachment.url)
+        existing = existing_by_identity.get(identity)
+        if existing:
+            connection.execute(
+                """
+                UPDATE attachments
+                SET label = ?, url = ?, file_type = ?
+                WHERE id = ?
+                """,
+                (attachment.label, attachment.url, attachment.file_type, int(existing["id"])),
+            )
+            continue
         connection.execute(
             """
             INSERT OR IGNORE INTO attachments (notice_id, label, url, file_type)
@@ -193,9 +266,6 @@ def upsert_notice(connection: sqlite3.Connection, notice: Notice) -> bool:
             """,
             (notice_id, attachment.label, attachment.url, attachment.file_type),
         )
-
-    connection.commit()
-    return changed
 
 
 def list_notices(
@@ -282,5 +352,170 @@ def review_stats(connection: sqlite3.Connection) -> list[sqlite3.Row]:
             GROUP BY review_status
             ORDER BY count DESC, review_status ASC
             """
+        )
+    )
+
+
+def _notification_now() -> str:
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def get_notification_setting(connection: sqlite3.Connection, setting_key: str) -> str | None:
+    row = connection.execute(
+        "SELECT setting_value FROM notification_settings WHERE setting_key = ?",
+        (setting_key,),
+    ).fetchone()
+    return str(row["setting_value"]) if row else None
+
+
+def set_notification_setting(connection: sqlite3.Connection, setting_key: str, setting_value: str) -> None:
+    connection.execute(
+        """
+        INSERT INTO notification_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO UPDATE SET
+          setting_value = excluded.setting_value,
+          updated_at = excluded.updated_at
+        """,
+        (setting_key, setting_value, _notification_now()),
+    )
+    connection.commit()
+
+
+def notification_delivery_sent(
+    connection: sqlite3.Connection,
+    notification_type: str,
+    notification_key: str,
+    recipient: str,
+) -> bool:
+    row = connection.execute(
+        """
+        SELECT 1
+        FROM notification_deliveries
+        WHERE notification_type = ? AND notification_key = ? AND recipient = ? AND status = 'sent'
+        """,
+        (notification_type, notification_key, recipient),
+    ).fetchone()
+    return row is not None
+
+
+def record_notification_delivery(
+    connection: sqlite3.Connection,
+    *,
+    notification_type: str,
+    notification_key: str,
+    recipient: str,
+    subject: str,
+    notice_id: int | None = None,
+    status: str = "sent",
+    error: str = "",
+) -> None:
+    now = _notification_now()
+    sent_at = now if status == "sent" else None
+    connection.execute(
+        """
+        INSERT INTO notification_deliveries (
+          notification_type, notification_key, notice_id, recipient, subject,
+          status, sent_at, error, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(notification_type, notification_key, recipient) DO UPDATE SET
+          notice_id = excluded.notice_id,
+          subject = excluded.subject,
+          status = excluded.status,
+          sent_at = excluded.sent_at,
+          error = excluded.error,
+          created_at = excluded.created_at
+        """,
+        (
+            notification_type,
+            notification_key,
+            notice_id,
+            recipient,
+            subject,
+            status,
+            sent_at,
+            error,
+            now,
+        ),
+    )
+    connection.commit()
+
+
+def last_successful_notification_at(
+    connection: sqlite3.Connection,
+    notification_type: str,
+    recipient: str,
+) -> str | None:
+    row = connection.execute(
+        """
+        SELECT sent_at
+        FROM notification_deliveries
+        WHERE notification_type = ? AND recipient = ? AND status = 'sent' AND sent_at IS NOT NULL
+        ORDER BY sent_at DESC
+        LIMIT 1
+        """,
+        (notification_type, recipient),
+    ).fetchone()
+    return str(row["sent_at"]) if row else None
+
+
+def list_notices_since(
+    connection: sqlite3.Connection,
+    since_at: str,
+    *,
+    min_score: int = 0,
+) -> list[sqlite3.Row]:
+    return list(
+        connection.execute(
+            """
+            SELECT n.*,
+                   COALESCE(
+                     (SELECT json_group_array(json_object('label', a.label, 'url', a.url, 'file_type', a.file_type))
+                      FROM attachments a WHERE a.notice_id = n.id),
+                     '[]'
+                   ) AS attachments_json
+            FROM notices n
+            WHERE n.first_seen_at > ?
+              AND n.relevance_score >= ?
+              AND n.review_status NOT IN ('not_relevant', 'closed')
+            ORDER BY relevance_score DESC, COALESCE(deadline_at, '') ASC, first_seen_at ASC
+            """,
+            (since_at, min_score),
+        )
+    )
+
+
+def list_unnotified_notices(
+    connection: sqlite3.Connection,
+    *,
+    recipient: str,
+    baseline_at: str,
+    min_score: int = 0,
+) -> list[sqlite3.Row]:
+    return list(
+        connection.execute(
+            """
+            SELECT n.*,
+                   COALESCE(
+                     (SELECT json_group_array(json_object('label', a.label, 'url', a.url, 'file_type', a.file_type))
+                      FROM attachments a WHERE a.notice_id = n.id),
+                     '[]'
+                   ) AS attachments_json
+            FROM notices n
+            WHERE n.first_seen_at > ?
+              AND n.relevance_score >= ?
+              AND n.review_status NOT IN ('not_relevant', 'closed')
+              AND NOT EXISTS (
+                SELECT 1
+                FROM notification_deliveries d
+                WHERE d.notification_type = 'immediate'
+                  AND d.notification_key = CAST(n.id AS TEXT)
+                  AND d.recipient = ?
+                  AND d.status = 'sent'
+              )
+            ORDER BY relevance_score DESC, COALESCE(deadline_at, '') ASC, first_seen_at ASC
+            """,
+            (baseline_at, min_score, recipient),
         )
     )

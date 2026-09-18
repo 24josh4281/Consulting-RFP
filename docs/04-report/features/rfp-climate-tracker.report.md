@@ -247,9 +247,37 @@
 
 | Version | Date | Changes | Author |
 |---------|------|---------|--------|
+| 1.3 | 2026-09-18 | Added official GIR detail/RFP links, source catalog, briefing, email readiness, and scheduler scripts | Codex |
 | 1.2 | 2026-08-07 | Added `.env` auto-loading, live readiness checks, and safe PowerShell failure handling | Codex |
 | 1.1 | 2026-08-07 | Added RFP/document index reports and CLI commands | Codex |
 | 1.0 | 2026-08-07 | Completion report created | Codex |
+
+## Post-MVP Update: Official Source, RFP Link, and Email Readiness
+
+### What changed
+
+- Added an official-board adapter for the public 온실가스종합정보센터(GIR) bid board. It follows only public detail pages and records public RFP/notice attachment links.
+- Added exclusion terms to prevent obvious non-consulting noise (for example cleaning, security, food service, and unrelated facilities work) from entering the candidate queue.
+- Added consultant-facing HTML/Markdown briefing files for urgent deadlines, new notices, document gaps, and similar notices.
+- Added SMTP-ready immediate/daily/weekly notification commands with a durable SQLite delivery log and first-run baseline.
+- Added PowerShell scripts that support 30-minute polling, daily 17:00 KST, and Friday 18:00 KST scheduling after a successful SMTP test.
+- Added source-catalog and operations documentation based on the supplied reference files. No third-party repository code was copied.
+
+### Validation result
+
+| Check | Result |
+|---|---|
+| Python compile | PASS |
+| Unit tests | PASS: 17 tests |
+| Official GIR limited live check | PASS: 2 public climate/ETS notices |
+| GIR public document links | PASS: 6 RFP/notice/reason links |
+| Document report | PASS: 5 notices, 10 document rows including samples |
+| Notification first-run baseline | PASS: no historical mail is sent as new |
+| Actual SMTP email | Not run: credentials intentionally absent |
+
+### Remaining limitation
+
+The tracker does not claim live coverage of every Korean corporate procurement portal. Public official sources are active or catalogued first; private portals remain disabled until their access terms, public listing structure, and operational permission are individually verified. Actual external email still requires local SMTP credentials and a deliberate test send.
 
 ## Post-MVP Update: Live Readiness Workflow
 

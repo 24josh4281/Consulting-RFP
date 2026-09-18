@@ -142,8 +142,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_live_g2b_check.ps1 -Days 
 
 live 테스트 산출물:
 
-- `data/rfp_tracker_live.db`
-- `reports/dashboard_live.html`
-- `reports/notices_live.csv`
+- `data/rfp_tracker_official.db`
+- `reports/dashboard_official.html`
+- `reports/notices_official.csv`
 - `reports/rfp_documents_live.html`
 - `reports/rfp_documents_live.csv`

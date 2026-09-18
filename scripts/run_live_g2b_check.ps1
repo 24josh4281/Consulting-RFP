@@ -2,11 +2,13 @@ param(
   [int]$Days = 3,
   [string]$BaseConfig = "configs\sources.example.json",
   [string]$Config = "configs\sources.local.json",
-  [string]$Database = "data\rfp_tracker_live.db",
-  [string]$Dashboard = "reports\dashboard_live.html",
-  [string]$Csv = "reports\notices_live.csv",
-  [string]$DocumentsHtml = "reports\rfp_documents_live.html",
-  [string]$DocumentsCsv = "reports\rfp_documents_live.csv"
+  [string]$Database = "data\rfp_tracker_official.db",
+  [string]$Dashboard = "reports\dashboard_official.html",
+  [string]$Csv = "reports\notices_official.csv",
+  [string]$DocumentsHtml = "reports\rfp_documents_official.html",
+  [string]$DocumentsCsv = "reports\rfp_documents_official.csv",
+  [string]$BriefingHtml = "reports\briefing_official.html",
+  [string]$BriefingMarkdown = "reports\briefing_official.md"
 )
 
 $ErrorActionPreference = "Stop"
@@ -38,4 +40,6 @@ Invoke-Checked { powershell -ExecutionPolicy Bypass -File .\scripts\run_tracker.
   -Dashboard $Dashboard `
   -Csv $Csv `
   -DocumentsHtml $DocumentsHtml `
-  -DocumentsCsv $DocumentsCsv } "run_tracker"
+  -DocumentsCsv $DocumentsCsv `
+  -BriefingHtml $BriefingHtml `
+  -BriefingMarkdown $BriefingMarkdown } "run_tracker"
