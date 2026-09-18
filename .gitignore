@@ -11,3 +11,4 @@ data/*.db-*
 data/*.csv
 reports/*.html
 reports/*.csv
+reports/*.md
