@@ -11,7 +11,7 @@ version: 1.3
 > **Version**: Local working tree
 > **Author**: Codex
 > **Date**: 2026-09-21
-> **Status**: In progress
+> **Status**: Partial — implementation and Git push complete; one-time GitHub Pages activation is pending repository-owner login.
 
 ---
 
@@ -60,13 +60,13 @@ version: 1.3
 
 ### 2.1 In Scope
 
-- [ ] G2B raw JSON의 `ntceSpecDocUrlN/ntceSpecFileNmN`을 `attachments`에 중복 없이 backfill한다.
-- [ ] 직접 공개 HWPX를 기존 evidence-first 추출기로 처리한다.
-- [ ] Tier 1 공식 소스를 샘플·미확인 레코드와 분리한 우선 검토 패널과 필터를 제공한다.
-- [ ] 원본 공고와 별도인 `bid_fit_reviews`에 적합성·자격·투입인력·입찰 의견·위험·메모를 저장한다.
-- [ ] 내부 HTML 상세와 Excel `입찰적합성검토` 시트에 저장된 검토값을 표시한다.
-- [ ] 공공 원문 정보만 포함한 `site/index.html`을 만든다.
-- [ ] GitHub Pages Actions workflow, 테스트, 문서, 검증된 Git push를 수행한다.
+- [x] G2B raw JSON의 `ntceSpecDocUrlN/ntceSpecFileNmN`을 `attachments`에 중복 없이 backfill한다.
+- [x] 직접 공개 HWPX를 기존 evidence-first 추출기로 처리한다.
+- [x] Tier 1 공식 소스를 샘플·미확인 레코드와 분리한 우선 검토 패널과 필터를 제공한다.
+- [x] 원본 공고와 별도인 `bid_fit_reviews`에 적합성·자격·투입인력·입찰 의견·위험·메모를 저장한다.
+- [x] 내부 HTML 상세와 Excel `입찰적합성검토` 시트에 저장된 검토값을 표시한다.
+- [x] 공공 원문 정보만 포함한 `site/index.html`을 만든다.
+- [x] GitHub Pages Actions workflow, 테스트, 문서, 검증된 Git push를 수행한다. Pages 실제 활성화만 소유자 로그인 대기다.
 
 ### 2.2 Out of Scope
 
@@ -84,14 +84,14 @@ version: 1.3
 
 | ID | Requirement | Priority | Status |
 |----|-------------|----------|--------|
-| FR-01 | G2B raw JSON의 공개 첨부 URL과 파일명을 attachment로 복원한다. | High | Pending |
-| FR-02 | 첨부가 생긴 공고의 낡은 `missing_document_url` 파생 상태를 정확히 해소한다. | High | Pending |
-| FR-03 | Tier 1 공식 공고를 원문 확인 여부·마감·검토상태와 함께 우선 표시한다. | High | Pending |
-| FR-04 | 샘플/placeholder는 실제 우선 기회와 분리 표시한다. | High | Pending |
-| FR-05 | 공고별 입찰 적합성·필요 자격·예상 투입인력·입찰 의견·위험/메모를 원문과 분리해 저장한다. | High | Pending |
-| FR-06 | Excel에 편집 가능한 입찰적합성검토 시트와 목록 필터를 제공한다. | High | Pending |
-| FR-07 | 공개 사이트는 내부 판단을 제거하고 공개 공고·공식 링크·원문 근거만 표시한다. | High | Pending |
-| FR-08 | GitHub Pages workflow를 커밋·푸시하고 외부 URL을 검증한다. | High | Pending |
+| FR-01 | G2B raw JSON의 공개 첨부 URL과 파일명을 attachment로 복원한다. | High | Complete — 37 notices / 139 links |
+| FR-02 | 첨부가 생긴 공고의 낡은 `missing_document_url` 파생 상태를 정확히 해소한다. | High | Complete — current payload suppresses stale blank gaps |
+| FR-03 | Tier 1 공식 공고를 원문 확인 여부·마감·검토상태와 함께 우선 표시한다. | High | Complete — 2 official Tier 1 records; samples excluded |
+| FR-04 | 샘플/placeholder는 실제 우선 기회와 분리 표시한다. | High | Complete |
+| FR-05 | 공고별 입찰 적합성·필요 자격·예상 투입인력·입찰 의견·위험/메모를 원문과 분리해 저장한다. | High | Complete |
+| FR-06 | Excel에 편집 가능한 입찰적합성검토 시트와 목록 필터를 제공한다. | High | Complete |
+| FR-07 | 공개 사이트는 내부 판단을 제거하고 공개 공고·공식 링크·원문 근거만 표시한다. | High | Complete — 46 official notices / 145 public document links |
+| FR-08 | GitHub Pages workflow를 커밋·푸시하고 외부 URL을 검증한다. | High | Partial — pushed; owner must activate Pages once |
 
 ### 3.2 Non-Functional Requirements
 
@@ -109,20 +109,20 @@ version: 1.3
 
 ### 4.1 Definition of Done
 
-- [ ] G2B raw attachment backfill tests and actual DB backfill pass.
-- [ ] Public direct HWPX is processed without accessing protected sources.
-- [ ] 공식 Tier 1 우선 검토 목록과 샘플 분리가 화면에서 확인된다.
-- [ ] 적합성 검토표는 Excel에서 입력 가능하고 local payload에 보존된다.
-- [ ] public site does not include `review_note`, qualification, team, decision, risk, or credentials.
-- [ ] all regression tests pass and generated workbook has no formula errors.
-- [ ] reviewed source/docs/site files are committed and pushed to `main`.
+- [x] G2B raw attachment backfill tests and actual DB backfill pass.
+- [x] Public direct HWPX is processed without accessing protected sources.
+- [x] 공식 Tier 1 우선 검토 목록과 샘플 분리가 화면에서 확인된다.
+- [x] 적합성 검토표는 Excel에서 입력 가능하고 local payload에 보존된다.
+- [x] public site does not include `review_note`, qualification, team, decision, risk, or credentials.
+- [x] all regression tests pass and generated workbook has no formula errors.
+- [x] reviewed source/docs/site files are committed and pushed to `main`.
 
 ### 4.2 Quality Criteria
 
-- [ ] 모든 신규 SQL은 parameterized query를 사용한다.
-- [ ] 기존 49 notice rows와 source attachments가 보존된다.
-- [ ] 공개 Pages는 API key/SMTP/DB에 의존하지 않는 정적 파일이다.
-- [ ] GitHub Pages failure 시 원인과 next action을 명확히 남긴다.
+- [x] 모든 신규 SQL은 parameterized query를 사용한다.
+- [x] 기존 49 notice rows와 source attachments가 보존된다.
+- [x] 공개 Pages는 API key/SMTP/DB에 의존하지 않는 정적 파일이다.
+- [x] GitHub Pages failure 시 원인과 next action을 명확히 남긴다.
 
 ---
 
@@ -165,10 +165,10 @@ version: 1.3
 
 ### 6.3 Verification
 
-- [ ] Existing source consumers remain compatible.
-- [ ] Fit reviews do not change raw notice or attachment values.
-- [ ] Public dashboard output is sanitized.
-- [ ] Git staging does not include `.env`, data DB, reports, outputs, or node_modules.
+- [x] Existing source consumers remain compatible.
+- [x] Fit reviews do not change raw notice or attachment values.
+- [x] Public dashboard output is sanitized.
+- [x] Git staging does not include `.env`, data DB, reports, outputs, or node_modules.
 
 ---
 
@@ -240,9 +240,10 @@ Selected Level: Starter
 ## 9. Next Steps
 
 1. [x] Inspect current source payload, workbook, remote, and public Pages state.
-2. [ ] Write design and implement small tested modules.
-3. [ ] Run source backfill and public-document extraction.
-4. [ ] Generate local and public artifacts, validate, commit, push, and verify deployment.
+2. [x] Write design and implement small tested modules.
+3. [x] Run source backfill and public-document extraction.
+4. [x] Generate local and public artifacts, validate, and push `22b55b9` to `main`.
+5. [ ] Repository owner: enable GitHub Pages with **GitHub Actions**, then rerun the existing workflow to make the public URL live.
 
 ---
 

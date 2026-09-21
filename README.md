@@ -163,6 +163,23 @@ powershell -ExecutionPolicy Bypass -File .\scripts\connect_github.ps1 -RepoUrl "
 
 자세한 방법은 [docs/GITHUB_SETUP.md](docs/GITHUB_SETUP.md)를 확인하세요.
 
+### 모든 컴퓨터에서 보는 공개 대시보드
+
+`site/index.html`은 내부 Tier, 검토 메모, 자격·투입인력, 입찰 의견, DB·SMTP 정보를 제외한 공개 정적 스냅샷입니다. `main`에 `site/` 또는 `.github/workflows/pages.yml` 변경을 푸시하면 Pages workflow가 배포합니다.
+
+처음 한 번만 저장소 소유자가 GitHub의 **Settings → Pages → Build and deployment → Source**를 **GitHub Actions**로 설정해야 합니다. 그 뒤 공개 주소는 아래 형식으로 열립니다.
+
+`https://24josh4281.github.io/Consulting-RFP/`
+
+공개 페이지를 최신화할 때는 로컬 수집·문서 추출 후 아래를 실행하고 `site/index.html`을 커밋·푸시합니다. 공개 Pages는 실시간 DB가 아니라 마지막 검증된 정적 스냅샷입니다.
+
+```powershell
+python -m rfp_tracker render-workbench --db data\rfp_tracker_official.db --out site\index.html --public
+git add site\index.html
+git commit -m "chore: refresh public RFP dashboard"
+git push origin main
+```
+
 ## 프로젝트 구조
 
 ```text

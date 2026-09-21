@@ -11,7 +11,7 @@ version: 1.3
 > **Version**: Local working tree
 > **Author**: Codex
 > **Date**: 2026-09-21
-> **Status**: In progress
+> **Status**: Partial — implementation is complete; GitHub Pages activation awaits repository-owner login.
 > **Planning Doc**: `docs/01-plan/features/g2b-rfp-priority-review-and-pages.plan.md`
 
 ### Pipeline References (if applicable)
@@ -208,17 +208,17 @@ No source column is changed. A removal of an attachment only affects raw sync li
 
 #### Internal Workbench
 
-- [ ] Priority panel: official Tier 1 only, source document status, deadline, review status, `우선 보기` action
-- [ ] Full-table filter: priority/official filter in addition to existing filters
-- [ ] Detail: current fit/review status, qualification, team, bid decision, key risk, note
-- [ ] Detail: official source/RFP links and source-backed document summary
+- [x] Priority panel: official Tier 1 only, source document status, deadline, review status, `우선 보기` action
+- [x] Full-table filter: priority/official filter in addition to existing filters
+- [x] Detail: current fit/review status, qualification, team, bid decision, key risk, note
+- [x] Detail: official source/RFP links and source-backed document summary
 
 #### Public Pages
 
-- [ ] Notice list: official sources only, no sample records
-- [ ] Links: official notice and publicly collected attachments
-- [ ] Notice detail: public document summary and amount basis only
-- [ ] Exclusion: no internal review note, bid decision, team, qualification, or credentials
+- [x] Notice list: official sources only, no sample records
+- [x] Links: official notice and publicly collected attachments
+- [x] Notice detail: public document summary and amount basis only
+- [x] Exclusion: no internal review note, bid decision, team, qualification, or credentials
 
 ---
 
@@ -334,11 +334,11 @@ No source column is changed. A removal of an attachment only affects raw sync li
 
 ### 11.2 Implementation Order
 
-1. [ ] G2B named attachment extraction/backfill and tests
-2. [ ] bid fit review storage, CLI, payload and tests
-3. [ ] priority panel and internal/public render tests
-4. [ ] Excel review sheet, validation and visual QA
-5. [ ] public site generation, Pages workflow, Git review/push
+1. [x] G2B named attachment extraction/backfill and tests
+2. [x] bid fit review storage, CLI, payload and tests
+3. [x] priority panel and internal/public render tests
+4. [x] Excel review sheet, validation and visual QA
+5. [x] public site generation, Pages workflow, Git review/push; Pages activation awaits owner login
 
 ### 11.3 Session Guide
 
