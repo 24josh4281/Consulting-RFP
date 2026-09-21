@@ -12,10 +12,11 @@ from rfp_tracker.companies import Company, generate_homepage_sources, normalize_
 from rfp_tracker.config import load_dotenv, read_json, set_source_enabled
 from rfp_tracker.documents import classify_document, list_document_rows
 from rfp_tracker.fetchers import build_fetcher
-from rfp_tracker.keyword_matcher import extension_from_url, is_excluded, is_relevant, score_text
+from rfp_tracker.keyword_matcher import assess_g2b_title, extension_from_url, is_excluded, is_relevant, score_text
 from rfp_tracker.models import Attachment, Notice
-from rfp_tracker.notifications import dispatch_notifications
-from rfp_tracker.storage import connect, list_notices, update_notice_review, upsert_notice
+from rfp_tracker.notifications import dispatch_notifications, read_notification_config
+from rfp_tracker.storage import connect, list_notices, update_notice_review, update_notice_tier, upsert_notice
+from rfp_tracker.tiering import TIER_1, TIER_2, TIER_3, assess_innergen_tier
 
 
 KEYWORDS = {
@@ -31,6 +32,61 @@ KEYWORDS = {
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PROJECT_KEYWORDS = read_json(PROJECT_ROOT / "configs" / "keywords.json")
+
+
+class TieringTests(unittest.TestCase):
+    def test_innergen_tiers_follow_business_scope_and_exclusion_priority(self):
+        cases = [
+            ("Scope 3 온실가스 산정 고도화 컨설팅 용역", TIER_1),
+            ("ETS 배출권 제도 분석 컨설팅", TIER_1),
+            ("배출권거래제 통합정보시스템 기능개선 연구 용역", TIER_1),
+            ("기후변화 산업 전환 시나리오 분석 연구", TIER_1),
+            ("온실가스 저감 설비 설치 지원사업", TIER_2),
+            ("스마트 불법대기배출 통합 플랫폼 개발", TIER_2),
+            ("수질복원센터 하수찌꺼기 운반 및 처리용역", TIER_3),
+            ("탄소중립펀드 투자유치 운영 용역", TIER_3),
+            ("기후위기 대응 홍보 영상 제작", TIER_3),
+            ("탄소 소재 기초과학 실험 연구", TIER_3),
+            ("CDPR 정밀 제어 알고리즘 개발", TIER_3),
+        ]
+        for title, expected in cases:
+            with self.subTest(title=title):
+                self.assertEqual(assess_innergen_tier(title).tier, expected)
+
+    def test_manual_tier_is_preserved_when_source_notice_is_refreshed(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            connection = connect(Path(tmp_dir) / "tracker.db")
+            original = Notice(
+                source_id="sample",
+                source_name="Sample",
+                external_id="manual-tier",
+                title="온실가스 산정 컨설팅 용역",
+                url="https://example.com/original",
+                relevance_score=7,
+                business_tier=TIER_1,
+                tier_reason="자동 분류",
+            )
+            upsert_notice(connection, original)
+            notice_id = int(list_notices(connection)[0]["id"])
+            self.assertTrue(update_notice_tier(connection, notice_id, TIER_3, "사내 판단으로 이번에는 제외"))
+
+            refreshed = Notice(
+                source_id="sample",
+                source_name="Sample",
+                external_id="manual-tier",
+                title="온실가스 산정 컨설팅 용역 (정정)",
+                url="https://example.com/refreshed",
+                relevance_score=8,
+                business_tier=TIER_1,
+                tier_reason="자동 재분류",
+            )
+            upsert_notice(connection, refreshed)
+            row = list_notices(connection)[0]
+            self.assertEqual(row["business_tier"], TIER_3)
+            self.assertEqual(row["tier_source"], "manual")
+            self.assertEqual(row["tier_reason"], "사내 판단으로 이번에는 제외")
+            self.assertEqual(row["title"], "온실가스 산정 컨설팅 용역 (정정)")
+            connection.close()
 
 
 class KeywordMatcherTests(unittest.TestCase):
@@ -62,6 +118,23 @@ class KeywordMatcherTests(unittest.TestCase):
     def test_environmental_impact_assessment_is_not_blocked_by_waste_context(self):
         self.assertTrue(is_relevant("폐기물 처리시설 환경영향평가 용역 입찰", PROJECT_KEYWORDS))
 
+    def test_latin_abbreviation_does_not_match_as_a_partial_word(self):
+        result = score_text("CDPR 정밀 제어 알고리즘 개발", PROJECT_KEYWORDS)
+        self.assertNotIn("cdp", [keyword.lower() for keyword in result.keywords])
+
+    def test_g2b_title_policy_keeps_ambiguous_environment_notice_for_review(self):
+        assessment = assess_g2b_title("친환경 교통체계 구축사업 관련 연수 대행 용역", PROJECT_KEYWORDS)
+        self.assertEqual(assessment.tier, "needs_review")
+
+    def test_g2b_title_policy_requires_domain_signal_in_the_title(self):
+        assessment = assess_g2b_title("정보보안 및 개인정보보호 관리체계 강화 컨설팅 및 인증 용역", PROJECT_KEYWORDS)
+        self.assertEqual(assessment.tier, "ignore")
+
+    def test_g2b_title_policy_accepts_specific_environment_research(self):
+        assessment = assess_g2b_title("스마트 불법대기배출 통합 플랫폼 개발", PROJECT_KEYWORDS)
+        self.assertEqual(assessment.tier, "strong")
+        self.assertIn("대기배출", assessment.strong_keywords)
+
 
 class StorageReviewTests(unittest.TestCase):
     def test_review_status_can_be_updated(self):
@@ -89,6 +162,49 @@ class StorageReviewTests(unittest.TestCase):
             rows = list_notices(connection)
             self.assertEqual(rows[0]["review_status"], "interesting")
             self.assertEqual(rows[0]["review_note"], "제안 검토")
+            connection.close()
+
+    def test_needs_review_notice_is_stored_but_omitted_from_alerts_and_briefing(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "tracker.db"
+            connection = connect(db_path)
+            now = datetime(2026, 9, 18, 10, 0, tzinfo=ZoneInfo("Asia/Seoul"))
+            dispatch_notifications(connection, recipients=["alerts@example.com"], mode="immediate", now=now)
+            upsert_notice(
+                connection,
+                Notice(
+                    source_id="g2b_service_bids",
+                    source_name="G2B",
+                    external_id="ambiguous-title",
+                    title="친환경 교통체계 연수 대행 용역",
+                    url="https://example.com/notice",
+                    relevance_score=5,
+                    matched_keywords=["친환경", "용역"],
+                    review_status="needs_review",
+                    review_note="사람 검토 필요",
+                ),
+            )
+            first_seen = (now + timedelta(minutes=1)).isoformat(timespec="seconds")
+            connection.execute("UPDATE notices SET first_seen_at = ?, last_seen_at = ?", (first_seen, first_seen))
+            connection.commit()
+
+            sent: list[str] = []
+            alert = dispatch_notifications(
+                connection,
+                recipients=["alerts@example.com"],
+                mode="immediate",
+                send=True,
+                sender=lambda _recipient, payload: sent.append(payload.subject),
+                now=now + timedelta(minutes=2),
+            )
+            briefing = build_briefing(connection, now=now + timedelta(minutes=2))
+            rows = list_notices(connection)
+
+            self.assertEqual(rows[0]["review_status"], "needs_review")
+            self.assertEqual(alert[0].planned, 0)
+            self.assertEqual(sent, [])
+            self.assertEqual(briefing["summary"]["total_notices"], 1)
+            self.assertEqual(briefing["summary"]["eligible_notices"], 0)
             connection.close()
 
 
@@ -147,7 +263,7 @@ class ConfigUtilityTests(unittest.TestCase):
         self.assertTrue(config["sources"][0]["enabled"])
         self.assertFalse(set_source_enabled(config, "missing", True))
 
-    def test_g2b_environment_source_and_daily_1700_config_are_ready(self):
+    def test_g2b_environment_source_and_twice_daily_config_are_ready(self):
         sources = read_json(PROJECT_ROOT / "configs" / "sources.example.json")
         g2b = next(source for source in sources["sources"] if source["id"] == "g2b_service_bids")
         notification_config = read_json(PROJECT_ROOT / "configs" / "notifications.example.json")
@@ -159,7 +275,17 @@ class ConfigUtilityTests(unittest.TestCase):
         )
         self.assertEqual(g2b["service_key_param"], "serviceKey")
         self.assertIn("https://www.g2b.go.kr/", g2b["portal_url"])
-        self.assertEqual(notification_config["daily_send_at"], "17:00")
+        self.assertEqual(notification_config["daily_send_times"], ["10:00", "17:00"])
+
+    def test_legacy_single_daily_time_remains_supported(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "notifications.json"
+            config_path.write_text(
+                json.dumps({"recipients": ["alerts@example.com"], "daily_send_at": "17:00"}),
+                encoding="utf-8",
+            )
+            config = read_notification_config(config_path)
+            self.assertEqual(config["daily_send_times"], ["17:00"])
 
 
 class G2BFetcherTests(unittest.TestCase):
@@ -215,6 +341,39 @@ class G2BFetcherTests(unittest.TestCase):
         notices = fetcher._parse_payload(json.dumps(payload, ensure_ascii=False))
         self.assertEqual(len(notices), 1)
         self.assertIn("환경영향평가", notices[0].matched_keywords)
+
+    def test_g2b_uses_title_only_and_preserves_ambiguous_notices_for_review(self):
+        source = {
+            "id": "g2b_service_bids",
+            "name": "G2B environmental services",
+            "type": "g2b_bid_api",
+            "endpoint": "https://example.com/g2b",
+        }
+        payload = {
+            "response": {
+                "body": {
+                    "items": {
+                        "item": [
+                            {
+                                "bidNtceNo": "R26BK00000002",
+                                "bidNtceNm": "정보보안 및 개인정보보호 관리체계 강화 컨설팅 및 인증 용역",
+                                "dminsttNm": "한국원자력환경공단",
+                            },
+                            {
+                                "bidNtceNo": "R26BK00000003",
+                                "bidNtceNm": "친환경 교통체계 구축사업 관련 연수 대행 용역",
+                                "dminsttNm": "테스트 기관",
+                            },
+                        ]
+                    }
+                }
+            }
+        }
+        fetcher = build_fetcher(source, PROJECT_KEYWORDS, {}, Path("."))
+        notices = fetcher._parse_payload(json.dumps(payload, ensure_ascii=False))
+        self.assertEqual(len(notices), 1)
+        self.assertEqual(notices[0].review_status, "needs_review")
+        self.assertEqual(notices[0].category, "g2b_bid_api_review")
 
     def test_g2b_api_error_payload_is_reported_without_creating_notice(self):
         source = {
@@ -336,6 +495,26 @@ class DocumentIndexTests(unittest.TestCase):
             self.assertEqual(rfp_rows[0]["document_url"], "https://example.com/files/climate-rfp.pdf")
             connection.close()
 
+    def test_g2b_missing_document_explains_how_to_check_public_attachment_section(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            connection = connect(Path(tmp_dir) / "tracker.db")
+            upsert_notice(
+                connection,
+                Notice(
+                    source_id="g2b_service_bids",
+                    source_name="나라장터",
+                    external_id="g2b-no-attachment-url",
+                    title="온실가스 검증 용역",
+                    url="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=test",
+                    relevance_score=6,
+                    matched_keywords=["온실가스", "검증"],
+                ),
+            )
+            rows = list_document_rows(connection)
+            self.assertEqual(rows[0]["document_kind"], "missing")
+            self.assertIn("파일첨부", str(rows[0]["document_access_hint"]))
+            connection.close()
+
 
 class BriefingTests(unittest.TestCase):
     def test_briefing_highlights_urgent_and_missing_documents(self):
@@ -410,7 +589,7 @@ class OfficialBoardFetcherTests(unittest.TestCase):
 
 
 class NotificationTests(unittest.TestCase):
-    def test_daily_email_uses_configured_1700_label(self):
+    def test_daily_email_sends_each_configured_slot_once(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             connection = connect(Path(tmp_dir) / "tracker.db")
             baseline = datetime(2026, 9, 18, 10, 0, tzinfo=ZoneInfo("Asia/Seoul"))
@@ -432,17 +611,39 @@ class NotificationTests(unittest.TestCase):
             connection.commit()
 
             captured: list[str] = []
-            result = dispatch_notifications(
+            morning = dispatch_notifications(
                 connection,
                 recipients=["alerts@example.com"],
                 mode="daily",
-                daily_send_at="17:00",
+                daily_slot="10:00",
+                send=True,
+                sender=lambda _recipient, payload: captured.append(payload.text),
+                now=baseline,
+            )
+            evening = dispatch_notifications(
+                connection,
+                recipients=["alerts@example.com"],
+                mode="daily",
+                daily_slot="17:00",
                 send=True,
                 sender=lambda _recipient, payload: captured.append(payload.text),
                 now=baseline + timedelta(hours=7),
             )
-            self.assertEqual(result[0].sent, 1)
-            self.assertIn("17:00", captured[0])
+            duplicate_evening = dispatch_notifications(
+                connection,
+                recipients=["alerts@example.com"],
+                mode="daily",
+                daily_slot="17:00",
+                send=True,
+                sender=lambda _recipient, payload: captured.append(payload.text),
+                now=baseline + timedelta(hours=7, minutes=5),
+            )
+            self.assertEqual(morning[0].sent, 1)
+            self.assertEqual(evening[0].sent, 1)
+            self.assertEqual(duplicate_evening[0].skipped, 1)
+            self.assertEqual(len(captured), 2)
+            self.assertIn("10:00", captured[0])
+            self.assertIn("17:00", captured[1])
             connection.close()
 
     def test_immediate_alert_uses_baseline_and_prevents_duplicate_delivery(self):
@@ -474,6 +675,8 @@ class NotificationTests(unittest.TestCase):
                     url="https://example.com/new",
                     relevance_score=6,
                     matched_keywords=["온실가스", "검증"],
+                    business_tier=TIER_1,
+                    tier_reason="온실가스 검증 컨설팅",
                 ),
             )
             later = (now + timedelta(minutes=1)).isoformat(timespec="seconds")
@@ -505,6 +708,84 @@ class NotificationTests(unittest.TestCase):
             self.assertEqual(len(sent), 1)
             connection.close()
 
+    def test_immediate_only_sends_tier_1_and_digest_is_bordered_newsletter(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            connection = connect(Path(tmp_dir) / "tracker.db")
+            now = datetime(2026, 9, 18, 10, 0, tzinfo=ZoneInfo("Asia/Seoul"))
+            dispatch_notifications(connection, recipients=["alerts@example.com"], mode="immediate", now=now)
+            notices = [
+                Notice(
+                    source_id="sample",
+                    source_name="Sample",
+                    external_id="tier-1",
+                    title="Scope 3 산정 고도화 컨설팅",
+                    url="https://example.com/tier-1",
+                    relevance_score=8,
+                    business_tier=TIER_1,
+                    tier_reason="Scope 3 산정 컨설팅",
+                ),
+                Notice(
+                    source_id="sample",
+                    source_name="Sample",
+                    external_id="tier-2",
+                    title="온실가스 저감 설비 설치 지원",
+                    url="https://example.com/tier-2",
+                    relevance_score=6,
+                    business_tier=TIER_2,
+                    tier_reason="온실가스 설비 지원",
+                ),
+                Notice(
+                    source_id="sample",
+                    source_name="Sample",
+                    external_id="tier-3",
+                    title="탄소중립 포럼 영상 제작",
+                    url="https://example.com/tier-3",
+                    relevance_score=5,
+                    business_tier=TIER_3,
+                    tier_reason="행사·영상 사업",
+                ),
+            ]
+            for notice in notices:
+                upsert_notice(connection, notice)
+            later = (now + timedelta(minutes=1)).isoformat(timespec="seconds")
+            connection.execute("UPDATE notices SET first_seen_at = ?, last_seen_at = ?", (later, later))
+            connection.commit()
+
+            immediate_payloads = []
+            immediate = dispatch_notifications(
+                connection,
+                recipients=["alerts@example.com"],
+                mode="immediate",
+                send=True,
+                sender=lambda _recipient, payload: immediate_payloads.append(payload),
+                now=now + timedelta(minutes=2),
+            )
+            self.assertEqual(immediate[0].sent, 1)
+            self.assertEqual(len(immediate_payloads), 1)
+            self.assertIn("Scope 3 산정 고도화 컨설팅", immediate_payloads[0].html)
+            self.assertNotIn("온실가스 저감 설비 설치 지원", immediate_payloads[0].html)
+
+            digest_payloads = []
+            daily = dispatch_notifications(
+                connection,
+                recipients=["alerts@example.com"],
+                mode="daily",
+                daily_slot="10:00",
+                send=True,
+                sender=lambda _recipient, payload: digest_payloads.append(payload),
+                now=now + timedelta(minutes=3),
+            )
+            self.assertEqual(daily[0].sent, 1)
+            newsletter = digest_payloads[0].html
+            self.assertIn("INNERGEN CLIMATE INTELLIGENCE", newsletter)
+            self.assertIn("Tier 1 · 이너젠 직접 컨설팅 검토", newsletter)
+            self.assertIn("Tier 2 · 고객사 추천 가능 사업", newsletter)
+            self.assertIn("Tier 3 · 참고 / 직접 컨설팅 비적합", newsletter)
+            self.assertIn("border:1px solid #D1D5DB", newsletter)
+            self.assertIn("온실가스 저감 설비 설치 지원", newsletter)
+            self.assertIn("탄소중립 포럼 영상 제작", newsletter)
+            connection.close()
+
     def test_failed_immediate_email_stays_retryable(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             db_path = Path(tmp_dir) / "tracker.db"
@@ -521,6 +802,8 @@ class NotificationTests(unittest.TestCase):
                     url="https://example.com/retry",
                     relevance_score=6,
                     matched_keywords=["배출권거래제"],
+                    business_tier=TIER_1,
+                    tier_reason="배출권거래제 검토 컨설팅",
                 ),
             )
             later = (now + timedelta(minutes=1)).isoformat(timespec="seconds")

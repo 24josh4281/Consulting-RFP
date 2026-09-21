@@ -80,6 +80,43 @@ python -m rfp_tracker rfp-documents --db data\rfp_tracker.db --limit 50
 
 `missing`은 오류가 아니라 운영상 확인이 필요한 신호입니다. 사이트가 로그인, JavaScript, 상세 페이지 권한, 또는 별도 파일 API를 요구할 수 있습니다.
 
+## 3.1 전체 공고 작업대와 Excel
+
+동기화 스크립트는 수집된 직접 공개 HWPX 문서만 별도 cache로 읽어 과업 요약·금액 근거를 갱신합니다. 샘플, 로그인 필요, 첨부 URL 미수집, 지원하지 않는 형식은 원문을 바꾸지 않고 상태로만 남깁니다.
+
+전체 공고를 Tier, 검토상태, 출처, 문서 상태, 마감일로 한 화면에서 확인하려면 아래 명령을 실행합니다.
+
+~~~powershell
+python -m rfp_tracker backfill-g2b-attachments --db data\rfp_tracker_official.db
+python -m rfp_tracker extract-documents --db data\rfp_tracker_official.db --cache-dir data\document_cache --file-type hwpx
+python -m rfp_tracker render-workbench --db data\rfp_tracker_official.db --out reports\rfp_workbench_official.html
+~~~
+
+- reports/rfp_workbench_official.html: 공식 출처 Tier 1 우선 검토, 원문 공고 링크, RFP·과업지시서, 간단 과업 요약, 금액 기준·근거를 함께 보여주는 작업대
+- data/document_cache: 직접 공개된 원문 파일의 로컬 cache
+
+Excel 검토 파일은 아래 순서로 만듭니다.
+
+~~~powershell
+python -m rfp_tracker export-workbench-json --db data\rfp_tracker_official.db --out outputs\rfp_workbench_data.json
+node .\scripts\build_rfp_workbench_workbook.mjs --input outputs\rfp_workbench_data.json --output outputs\rfp_workbench.xlsx
+~~~
+
+Excel의 공고목록 금액과 문서 추출 금액은 구분되어 있습니다. 예산액, 소요예산, 추정가격, 투찰금액, 계약금액은 서로 다른 값일 수 있으므로 문서요약 시트의 금액 기준과 근거 문장을 같이 확인하세요.
+
+`입찰적합성검토` 시트의 노란색 열에는 컨설팅 적합성, 필요 자격·등록, 예상 투입인력, 입찰 의견, 위험, 메모를 기록합니다. 이 판단은 원문 공고와 분리된 내부 검토 정보입니다. 대시보드에도 남길 필요가 있으면 다음 명령으로 같은 공고 ID의 검토표를 저장합니다.
+
+~~~powershell
+python -m rfp_tracker fit-review set --db data\rfp_tracker_official.db --id 12 --consulting-fit high --decision conditional --qualifications "유사 실적 확인" --team "PM 1명, 전문가 2명" --risks "RFP 자격요건 확인" --note "원문 확인 후 결정"
+python -m rfp_tracker fit-review list --db data\rfp_tracker_official.db
+~~~
+
+공개 링크용 정적 스냅샷은 내부 Tier·검토 메모·입찰 의견·예상 인력을 제외해 별도로 생성합니다.
+
+~~~powershell
+python -m rfp_tracker render-workbench --db data\rfp_tracker_official.db --out site\index.html --public
+~~~
+
 ## 4. 신규 공고 메일, 매일 17:00, 주간 브리핑
 
 수신자와 SMTP 정보가 없으면 메일은 보내지지 않습니다. 먼저 수신자를 로컬 설정에 저장하고, `.env`를 준비합니다.

@@ -18,11 +18,17 @@ from .companies import (
 from .config import enabled_sources, load_dotenv, read_json, set_source_enabled, write_json
 from .documents import (
     DOCUMENT_KIND_LABELS,
+    backfill_g2b_attachments,
+    build_public_workbench_payload,
+    build_workbench_payload,
+    extract_document_insights,
     list_document_rows,
     render_documents_report,
+    write_workbench_json,
     write_documents_csv,
 )
 from .fetchers import build_fetcher
+from .keyword_matcher import assess_g2b_title
 from .notifications import (
     dispatch_notifications,
     initialize_baseline,
@@ -30,16 +36,24 @@ from .notifications import (
     read_notification_config,
     write_notification_config,
 )
-from .render import render_dashboard
+from .render import render_workbench_dashboard
 from .storage import (
+    VALID_BID_DECISIONS,
+    VALID_CONSULTING_FITS,
     connect,
     finish_run,
+    get_bid_fit_review,
+    list_bid_fit_reviews,
     list_notices,
     review_stats,
     start_run,
+    tier_stats,
+    update_notice_tier,
     update_notice_review,
+    upsert_bid_fit_review,
     upsert_notice,
 )
+from .tiering import VALID_BUSINESS_TIERS, assess_innergen_tier, tier_label
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -51,6 +65,7 @@ DEFAULT_COMPANY_UNIVERSE = ROOT_DIR / "data" / "krx_listed_companies.csv"
 DEFAULT_NOTIFICATION_CONFIG = ROOT_DIR / "configs" / "notifications.local.json"
 VALID_REVIEW_STATUSES = {
     "new",
+    "needs_review",
     "watch",
     "interesting",
     "not_relevant",
@@ -80,6 +95,13 @@ def sync_command(args: argparse.Namespace) -> int:
             notices = fetcher.fetch(days=args.days)
             print(f"[sync] {source['id']}: 후보 {len(notices)}건")
             for notice in notices:
+                assessment = assess_innergen_tier(
+                    notice.title,
+                    category=notice.category,
+                )
+                notice.business_tier = assessment.tier
+                notice.tier_reason = assessment.reason
+                notice.tier_source = "automatic"
                 inserted = upsert_notice(connection, notice)
                 if inserted:
                     inserted_count += 1
@@ -98,9 +120,64 @@ def sync_command(args: argparse.Namespace) -> int:
 
 def render_command(args: argparse.Namespace) -> int:
     connection = connect(args.db)
-    rows = list_notices(connection)
-    render_dashboard(rows, args.out)
-    print(f"[done] 대시보드 생성: {args.out} ({len(rows)}건)")
+    payload = build_workbench_payload(connection)
+    render_workbench_dashboard(payload, args.out)
+    print(f"[done] 공고 작업대 생성: {args.out} ({len(payload['notices'])}건)")
+    return 0
+
+
+def extract_documents_command(args: argparse.Namespace) -> int:
+    connection = connect(args.db)
+    outcomes = extract_document_insights(
+        connection,
+        cache_dir=args.cache_dir,
+        limit=args.limit,
+        file_type=args.file_type,
+    )
+    counts: dict[str, int] = {}
+    for outcome in outcomes:
+        status = str(outcome["extraction_status"])
+        counts[status] = counts.get(status, 0) + 1
+    print(f"[done] 문서 추출 상태 갱신: {len(outcomes)}건")
+    for status, count in sorted(counts.items()):
+        print(f"{status}={count}")
+    print("[note] 원문 공고, 첨부, 검토/Tier, 알림 발송 기록은 변경하지 않았습니다.")
+    return 0
+
+
+def backfill_g2b_attachments_command(args: argparse.Namespace) -> int:
+    connection = connect(args.db)
+    summary = backfill_g2b_attachments(connection)
+    print(
+        "[done] 나라장터 저장 응답의 명시적 첨부 링크 복원: "
+        f"processed={summary['processed_notices']} "
+        f"with_links={summary['with_explicit_attachments']} "
+        f"added={summary['added']} updated={summary['updated']} "
+        f"deduplicated={summary['deduplicated']}"
+    )
+    if summary["invalid_raw_json"]:
+        print(f"[warn] raw JSON을 읽지 못한 공고: {summary['invalid_raw_json']}건")
+    if summary["without_explicit_attachments"]:
+        print(f"[note] 명시적 첨부 URL이 없던 공고: {summary['without_explicit_attachments']}건")
+    print("[note] 원문 공고, 검토 상태, Tier, 기존 문서 요약·금액 근거는 변경하지 않았습니다.")
+    return 0
+
+
+def render_workbench_command(args: argparse.Namespace) -> int:
+    connection = connect(args.db)
+    payload = build_public_workbench_payload(connection) if args.public else build_workbench_payload(connection)
+    render_workbench_dashboard(payload, args.out, public=args.public)
+    scope = "공개용 공고 작업대" if args.public else "공고 작업대"
+    print(f"[done] {scope} 생성: {args.out} ({len(payload['notices'])}건)")
+    return 0
+
+
+def export_workbench_json_command(args: argparse.Namespace) -> int:
+    connection = connect(args.db)
+    payload = build_workbench_payload(connection)
+    write_workbench_json(payload, args.out)
+    print(f"[done] Excel 입력 JSON 생성: {args.out}")
+    print(f"[note] notices={len(payload['notices'])}, documents={len(payload['documents'])}")
     return 0
 
 
@@ -116,6 +193,9 @@ def export_csv_command(args: argparse.Namespace) -> int:
                 "source_name",
                 "notice_id",
                 "review_status",
+                "business_tier",
+                "tier_reason",
+                "tier_source",
                 "title",
                 "url",
                 "buyer",
@@ -136,6 +216,9 @@ def export_csv_command(args: argparse.Namespace) -> int:
                     row["source_name"],
                     row["id"],
                     row["review_status"],
+                    row["business_tier"],
+                    row["tier_reason"],
+                    row["tier_source"],
                     row["title"],
                     row["url"],
                     row["buyer"],
@@ -160,6 +243,7 @@ def rfp_documents_command(args: argparse.Namespace) -> int:
         connection,
         kind=args.kind,
         status=args.status,
+        business_tier=args.tier,
         min_score=args.min_score,
         include_missing=not args.hide_missing,
     )
@@ -173,7 +257,7 @@ def rfp_documents_command(args: argparse.Namespace) -> int:
         document_url = row["document_url"] or "MISSING"
         print(
             f"[notice={row['notice_id']}] kind={row['document_kind']} "
-            f"status={row['review_status']} score={row['relevance_score']} "
+            f"tier={row['business_tier']} status={row['review_status']} score={row['relevance_score']} "
             f"title={row['notice_title']} document={row['document_label'] or document_url}"
         )
     return 0
@@ -185,6 +269,7 @@ def render_documents_command(args: argparse.Namespace) -> int:
         connection,
         kind=args.kind,
         status=args.status,
+        business_tier=args.tier,
         min_score=args.min_score,
         include_missing=not args.hide_missing,
     )
@@ -230,7 +315,7 @@ def notifications_status_command(args: argparse.Namespace) -> int:
     print(f"config={args.config}")
     print(f"recipients={', '.join(status['recipients']) or 'MISSING'}")
     print(f"baseline_at={status['baseline_at'] or 'NOT_INITIALIZED'}")
-    print(f"daily_send_at={status['daily_send_at']} KST")
+    print(f"daily_send_times={', '.join(status['daily_send_times'])} KST")
     print(f"weekly={status['weekly_send_day']} {status['weekly_send_at']} KST")
     smtp_state = "READY" if status["smtp_ready"] else "MISSING"
     print(f"smtp={smtp_state}")
@@ -268,6 +353,29 @@ def notifications_dispatch_command(args: argparse.Namespace) -> int:
         print("[error] No valid email recipient. Run notifications setup or pass --recipient.", file=sys.stderr)
         return 2
 
+    daily_slot = None
+    if args.mode == "daily":
+        configured_slots = list(config["daily_send_times"])
+        daily_slot = args.daily_slot
+        if not daily_slot:
+            if len(configured_slots) == 1:
+                daily_slot = configured_slots[0]
+            else:
+                print(
+                    "[error] Choose a configured daily slot, for example: --daily-slot 10:00",
+                    file=sys.stderr,
+                )
+                return 2
+        if daily_slot not in configured_slots:
+            print(
+                "[error] daily slot must be listed in notification config: " + ", ".join(configured_slots),
+                file=sys.stderr,
+            )
+            return 2
+    elif args.daily_slot:
+        print("[error] --daily-slot can only be used with --mode daily.", file=sys.stderr)
+        return 2
+
     connection = connect(args.db)
     try:
         results = dispatch_notifications(
@@ -275,7 +383,7 @@ def notifications_dispatch_command(args: argparse.Namespace) -> int:
             recipients=recipients,
             mode=args.mode,
             min_score=args.min_score if args.min_score is not None else int(config["min_relevance_score"]),
-            daily_send_at=str(config["daily_send_at"]),
+            daily_slot=daily_slot,
             send=args.send,
         )
     except ValueError as exc:
@@ -312,6 +420,7 @@ def list_command(args: argparse.Namespace) -> int:
     rows = list_notices(
         connection,
         status=args.status,
+        business_tier=args.tier,
         min_score=args.min_score,
         limit=args.limit,
     )
@@ -321,7 +430,8 @@ def list_command(args: argparse.Namespace) -> int:
     for row in rows:
         print(
             f"[{row['id']}] score={row['relevance_score']} "
-            f"status={row['review_status']} source={row['source_name']} title={row['title']}"
+            f"tier={row['business_tier']} status={row['review_status']} "
+            f"source={row['source_name']} title={row['title']}"
         )
     return 0
 
@@ -341,6 +451,186 @@ def review_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def tier_command(args: argparse.Namespace) -> int:
+    if args.tier not in VALID_BUSINESS_TIERS:
+        allowed = ", ".join(sorted(VALID_BUSINESS_TIERS))
+        print(f"[error] Unknown tier: {args.tier}. Allowed: {allowed}", file=sys.stderr)
+        return 2
+    reason = (args.reason or "").strip()
+    if not reason:
+        print("[error] A short manual tier reason is required.", file=sys.stderr)
+        return 2
+
+    connection = connect(args.db)
+    updated = update_notice_tier(connection, args.id, args.tier, reason, tier_source="manual")
+    if not updated:
+        print(f"[error] Notice id not found: {args.id}", file=sys.stderr)
+        return 1
+    print(f"[done] Notice {args.id} classified as {args.tier} (manual): {tier_label(args.tier)}")
+    return 0
+
+
+def fit_review_set_command(args: argparse.Namespace) -> int:
+    provided = [
+        args.consulting_fit,
+        args.qualifications,
+        args.team,
+        args.decision,
+        args.risks,
+        args.note,
+    ]
+    if not any(value is not None for value in provided):
+        print("[error] 저장할 적합성 검토 항목을 하나 이상 입력하세요.", file=sys.stderr)
+        return 2
+    connection = connect(args.db)
+    existing = get_bid_fit_review(connection, args.id)
+    defaults = {
+        "consulting_fit": "not_reviewed",
+        "qualification_requirements": "",
+        "proposed_team": "",
+        "bid_decision": "pending",
+        "key_risks": "",
+        "decision_note": "",
+    }
+    current = {
+        key: str(existing[key] or default) if existing else default
+        for key, default in defaults.items()
+    }
+    values = {
+        "consulting_fit": args.consulting_fit if args.consulting_fit is not None else current["consulting_fit"],
+        "qualification_requirements": args.qualifications if args.qualifications is not None else current["qualification_requirements"],
+        "proposed_team": args.team if args.team is not None else current["proposed_team"],
+        "bid_decision": args.decision if args.decision is not None else current["bid_decision"],
+        "key_risks": args.risks if args.risks is not None else current["key_risks"],
+        "decision_note": args.note if args.note is not None else current["decision_note"],
+    }
+    try:
+        updated = upsert_bid_fit_review(connection, notice_id=args.id, **values)
+    except ValueError as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return 2
+    if not updated:
+        print(f"[error] Notice id not found: {args.id}", file=sys.stderr)
+        return 1
+    print(
+        f"[done] Notice {args.id} bid-fit review saved: "
+        f"fit={values['consulting_fit']} decision={values['bid_decision']}"
+    )
+    print("[note] 원문 공고, 첨부, 금액 근거, 검토 상태, Tier는 변경하지 않았습니다.")
+    return 0
+
+
+def fit_review_list_command(args: argparse.Namespace) -> int:
+    connection = connect(args.db)
+    rows = list_bid_fit_reviews(connection)
+    if not rows:
+        print("[fit-review] 저장된 입찰 적합성 검토표가 없습니다.")
+        return 0
+    for row in rows:
+        print(
+            f"[notice={row['notice_id']}] tier={row['business_tier']} "
+            f"fit={row['consulting_fit']} decision={row['bid_decision']} "
+            f"title={row['notice_title']}"
+        )
+    return 0
+
+
+def tier_audit_command(args: argparse.Namespace) -> int:
+    """Preview or backfill automatic business tiers without changing raw notices."""
+    connection = connect(args.db)
+    rows = list_notices(connection)
+    counts = {tier: 0 for tier in VALID_BUSINESS_TIERS}
+    automatic_rows = 0
+    manual_preserved = 0
+    changed = 0
+
+    for row in rows:
+        if str(row["tier_source"] or "automatic") == "manual":
+            manual_preserved += 1
+            counts[str(row["business_tier"] or "unclassified")] = (
+                counts.get(str(row["business_tier"] or "unclassified"), 0) + 1
+            )
+            continue
+
+        automatic_rows += 1
+        assessment = assess_innergen_tier(
+            str(row["title"] or ""),
+            category=str(row["category"] or ""),
+        )
+        counts[assessment.tier] = counts.get(assessment.tier, 0) + 1
+        is_changed = (
+            str(row["business_tier"] or "unclassified") != assessment.tier
+            or str(row["tier_reason"] or "") != assessment.reason
+            or str(row["tier_source"] or "automatic") != "automatic"
+        )
+        if args.apply and is_changed:
+            update_notice_tier(
+                connection,
+                int(row["id"]),
+                assessment.tier,
+                assessment.reason,
+                tier_source="automatic",
+            )
+            changed += 1
+
+    print(
+        "[tier-audit] "
+        f"total={len(rows)} automatic={automatic_rows} manual_preserved={manual_preserved} "
+        f"tier_1={counts.get('tier_1', 0)} tier_2={counts.get('tier_2', 0)} "
+        f"tier_3={counts.get('tier_3', 0)} unclassified={counts.get('unclassified', 0)} "
+        f"applied={changed}"
+    )
+    if not args.apply:
+        print("[note] No notice changed. Re-run with --apply to save only automatic Tier metadata.")
+    else:
+        print("[note] Raw source text, review status, attachments, and notification delivery records were preserved.")
+    return 0
+
+
+def g2b_title_audit_command(args: argparse.Namespace) -> int:
+    """Safely quarantine existing broad G2B matches without deleting source data."""
+    keyword_config = read_json(args.keywords)
+    connection = connect(args.db)
+    rows = connection.execute(
+        """
+        SELECT id, title, review_status
+        FROM notices
+        WHERE source_id = 'g2b_service_bids'
+        ORDER BY id ASC
+        """
+    ).fetchall()
+    tier_counts = {"strong": 0, "needs_review": 0, "ignore": 0}
+    candidates: list[int] = []
+    for row in rows:
+        assessment = assess_g2b_title(str(row["title"]), keyword_config)
+        tier_counts[assessment.tier] = tier_counts.get(assessment.tier, 0) + 1
+        if assessment.tier != "strong" and str(row["review_status"]) == "new":
+            candidates.append(int(row["id"]))
+
+    changed = 0
+    if args.apply:
+        for notice_id in candidates:
+            update_notice_review(
+                connection,
+                notice_id,
+                "needs_review",
+                "공고명 기준 관련성이 불확실하여 자동 알림에서 제외했습니다. 원문을 확인해 검토 상태를 변경하세요.",
+            )
+            changed += 1
+
+    print(
+        "[g2b-title-audit] "
+        f"total={len(rows)} strong={tier_counts['strong']} "
+        f"needs_review={tier_counts['needs_review']} ignore={tier_counts['ignore']} "
+        f"eligible_for_quarantine={len(candidates)} applied={changed}"
+    )
+    if not args.apply:
+        print("[note] No notice changed. Re-run with --apply to mark only current new items as needs_review.")
+    else:
+        print("[note] Source text and delivery records were preserved; only review status/note changed.")
+    return 0
+
+
 def stats_command(args: argparse.Namespace) -> int:
     connection = connect(args.db)
     rows = review_stats(connection)
@@ -348,6 +638,9 @@ def stats_command(args: argparse.Namespace) -> int:
     print(f"total={total}")
     for row in rows:
         print(f"{row['review_status']}={row['count']}")
+    print("tiers:")
+    for row in tier_stats(connection):
+        print(f"{row['business_tier']}={row['count']}")
     return 0
 
 
@@ -470,10 +763,61 @@ def build_parser() -> argparse.ArgumentParser:
     sync.add_argument("--days", type=int, default=14)
     sync.set_defaults(func=sync_command)
 
-    render = subparsers.add_parser("render", help="HTML 대시보드 생성")
+    render = subparsers.add_parser("render", help="전체 공고 작업대 HTML 생성")
     render.add_argument("--db", default=str(ROOT_DIR / "data" / "rfp_tracker.db"))
     render.add_argument("--out", default=str(ROOT_DIR / "reports" / "dashboard.html"))
     render.set_defaults(func=render_command)
+
+    extract_documents = subparsers.add_parser(
+        "extract-documents",
+        help="수집된 직접 공개 문서에서 과업 요약과 금액 근거를 추출",
+    )
+    extract_documents.add_argument("--db", default=str(ROOT_DIR / "data" / "rfp_tracker.db"))
+    extract_documents.add_argument(
+        "--cache-dir",
+        default=str(ROOT_DIR / "data" / "document_cache"),
+        help="공개 원문 cache 폴더. 원문 공고/첨부 DB 값은 변경하지 않습니다.",
+    )
+    extract_documents.add_argument("--limit", type=int, help="처리할 문서 행 수 제한")
+    extract_documents.add_argument(
+        "--file-type",
+        help="특정 확장자의 직접 공개 문서만 처리합니다. 예: hwpx",
+    )
+    extract_documents.set_defaults(func=extract_documents_command)
+
+    backfill_g2b = subparsers.add_parser(
+        "backfill-g2b-attachments",
+        help="저장된 나라장터 API 원본에서 명시적 RFP·과업지시서 첨부 링크 복원",
+    )
+    backfill_g2b.add_argument("--db", default=str(ROOT_DIR / "data" / "rfp_tracker.db"))
+    backfill_g2b.set_defaults(func=backfill_g2b_attachments_command)
+
+    render_workbench = subparsers.add_parser(
+        "render-workbench",
+        help="Tier·문서·금액 근거를 포함한 전체 공고 작업대 HTML 생성",
+    )
+    render_workbench.add_argument("--db", default=str(ROOT_DIR / "data" / "rfp_tracker.db"))
+    render_workbench.add_argument(
+        "--out",
+        default=str(ROOT_DIR / "reports" / "rfp_workbench.html"),
+    )
+    render_workbench.add_argument(
+        "--public",
+        action="store_true",
+        help="사람 검토·Tier·로컬 경로를 제외한 공개용 정적 작업대를 만듭니다.",
+    )
+    render_workbench.set_defaults(func=render_workbench_command)
+
+    export_workbench_json = subparsers.add_parser(
+        "export-workbench-json",
+        help="Excel 작업대 생성을 위한 비밀 없는 JSON 데이터 생성",
+    )
+    export_workbench_json.add_argument("--db", default=str(ROOT_DIR / "data" / "rfp_tracker.db"))
+    export_workbench_json.add_argument(
+        "--out",
+        default=str(ROOT_DIR / "reports" / "rfp_workbench_data.json"),
+    )
+    export_workbench_json.set_defaults(func=export_workbench_json_command)
 
     export_csv = subparsers.add_parser("export-csv", help="Excel 확인용 CSV 생성")
     export_csv.add_argument("--db", default=str(ROOT_DIR / "data" / "rfp_tracker.db"))
@@ -484,6 +828,7 @@ def build_parser() -> argparse.ArgumentParser:
     rfp_documents.add_argument("--db", default=str(ROOT_DIR / "data" / "rfp_tracker.db"))
     rfp_documents.add_argument("--kind", choices=sorted(DOCUMENT_KIND_LABELS))
     rfp_documents.add_argument("--status", choices=sorted(VALID_REVIEW_STATUSES))
+    rfp_documents.add_argument("--tier", choices=sorted(VALID_BUSINESS_TIERS))
     rfp_documents.add_argument("--min-score", type=int)
     rfp_documents.add_argument("--limit", type=int, default=50)
     rfp_documents.add_argument("--hide-missing", action="store_true")
@@ -495,6 +840,7 @@ def build_parser() -> argparse.ArgumentParser:
     render_documents.add_argument("--csv", default=str(ROOT_DIR / "reports" / "rfp_documents.csv"))
     render_documents.add_argument("--kind", choices=sorted(DOCUMENT_KIND_LABELS))
     render_documents.add_argument("--status", choices=sorted(VALID_REVIEW_STATUSES))
+    render_documents.add_argument("--tier", choices=sorted(VALID_BUSINESS_TIERS))
     render_documents.add_argument("--min-score", type=int)
     render_documents.add_argument("--hide-missing", action="store_true")
     render_documents.set_defaults(func=render_documents_command)
@@ -532,6 +878,10 @@ def build_parser() -> argparse.ArgumentParser:
     notifications_dispatch.add_argument("--config", default=str(DEFAULT_NOTIFICATION_CONFIG))
     notifications_dispatch.add_argument("--recipient", action="append")
     notifications_dispatch.add_argument("--mode", choices=["immediate", "daily", "weekly", "test"], required=True)
+    notifications_dispatch.add_argument(
+        "--daily-slot",
+        help="Configured daily briefing slot in HH:MM format, for example 10:00.",
+    )
     notifications_dispatch.add_argument("--min-score", type=int)
     notifications_dispatch.add_argument("--send", action="store_true", help="Actually send mail through configured SMTP")
     notifications_dispatch.set_defaults(func=notifications_dispatch_command)
@@ -543,6 +893,7 @@ def build_parser() -> argparse.ArgumentParser:
     list_parser = subparsers.add_parser("list", help="수집된 공고 후보 목록 확인")
     list_parser.add_argument("--db", default=str(ROOT_DIR / "data" / "rfp_tracker.db"))
     list_parser.add_argument("--status", choices=sorted(VALID_REVIEW_STATUSES))
+    list_parser.add_argument("--tier", choices=sorted(VALID_BUSINESS_TIERS))
     list_parser.add_argument("--min-score", type=int)
     list_parser.add_argument("--limit", type=int, default=20)
     list_parser.set_defaults(func=list_command)
@@ -553,6 +904,53 @@ def build_parser() -> argparse.ArgumentParser:
     review.add_argument("--status", required=True)
     review.add_argument("--note")
     review.set_defaults(func=review_command)
+
+    tier = subparsers.add_parser("tier", help="공고의 이너젠 사업 적합 Tier를 수동 보정")
+    tier.add_argument("--db", default=str(ROOT_DIR / "data" / "rfp_tracker.db"))
+    tier.add_argument("--id", type=int, required=True)
+    tier.add_argument("--tier", choices=sorted(VALID_BUSINESS_TIERS), required=True)
+    tier.add_argument("--reason", required=True, help="수동 분류 근거")
+    tier.set_defaults(func=tier_command)
+
+    fit_review = subparsers.add_parser(
+        "fit-review",
+        help="공고 원문과 분리된 입찰 적합성 검토표를 기록하거나 확인",
+    )
+    fit_review_commands = fit_review.add_subparsers(dest="fit_review_command", required=True)
+    fit_review_set = fit_review_commands.add_parser("set", help="공고 한 건의 적합성 검토 항목 저장")
+    fit_review_set.add_argument("--db", default=str(ROOT_DIR / "data" / "rfp_tracker.db"))
+    fit_review_set.add_argument("--id", type=int, required=True)
+    fit_review_set.add_argument("--consulting-fit", choices=sorted(VALID_CONSULTING_FITS))
+    fit_review_set.add_argument("--qualifications", help="필요 자격·등록·실적")
+    fit_review_set.add_argument("--team", help="예상 투입인력 또는 역할")
+    fit_review_set.add_argument("--decision", choices=sorted(VALID_BID_DECISIONS))
+    fit_review_set.add_argument("--risks", help="핵심 위험·확인 필요사항")
+    fit_review_set.add_argument("--note", help="입찰 검토 메모")
+    fit_review_set.set_defaults(func=fit_review_set_command)
+    fit_review_list = fit_review_commands.add_parser("list", help="저장된 적합성 검토표 목록")
+    fit_review_list.add_argument("--db", default=str(ROOT_DIR / "data" / "rfp_tracker.db"))
+    fit_review_list.set_defaults(func=fit_review_list_command)
+
+    tier_audit = subparsers.add_parser(
+        "tier-audit",
+        help="기존 공고를 삭제 없이 이너젠 사업 적합 Tier로 분류",
+    )
+    tier_audit.add_argument("--db", default=str(ROOT_DIR / "data" / "rfp_tracker.db"))
+    tier_audit.add_argument("--apply", action="store_true", help="자동 분류 결과를 저장합니다. 수동 Tier는 보존합니다.")
+    tier_audit.set_defaults(func=tier_audit_command)
+
+    g2b_title_audit = subparsers.add_parser(
+        "g2b-title-audit",
+        help="공고명 기준으로 기존 나라장터 후보를 안전하게 검토 대기열로 분류",
+    )
+    g2b_title_audit.add_argument("--db", default=str(ROOT_DIR / "data" / "rfp_tracker.db"))
+    g2b_title_audit.add_argument("--keywords", default=str(DEFAULT_KEYWORDS))
+    g2b_title_audit.add_argument(
+        "--apply",
+        action="store_true",
+        help="강한 공고명 신호가 없는 현재 new 항목만 needs_review로 표시합니다.",
+    )
+    g2b_title_audit.set_defaults(func=g2b_title_audit_command)
 
     stats = subparsers.add_parser("stats", help="검토 상태별 공고 수 요약")
     stats.add_argument("--db", default=str(ROOT_DIR / "data" / "rfp_tracker.db"))

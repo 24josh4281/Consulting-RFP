@@ -11,6 +11,7 @@ param(
   [string]$DocumentsCsv = "reports\rfp_documents_official.csv",
   [string]$BriefingHtml = "reports\briefing_official.html",
   [string]$BriefingMarkdown = "reports\briefing_official.md",
+  [string]$DailySlot = "",
   [switch]$Send
 )
 
@@ -52,13 +53,22 @@ Invoke-Checked {
 } "run_tracker"
 
 function Invoke-NotificationDispatch {
-  param([string]$DispatchMode)
+  param(
+    [string]$DispatchMode,
+    [string]$Slot = ""
+  )
   $commandArgs = @(
     "-m", "rfp_tracker", "notifications", "dispatch",
     "--mode", $DispatchMode,
     "--db", $Database,
     "--config", $NotificationConfig
   )
+  if ($DispatchMode -eq "daily") {
+    if ([string]::IsNullOrWhiteSpace($Slot)) {
+      throw "Daily mode needs -DailySlot (for example, 10:00 or 17:00)."
+    }
+    $commandArgs += @("--daily-slot", $Slot)
+  }
   if ($Send) {
     $commandArgs += "--send"
   }
@@ -70,12 +80,12 @@ function Invoke-NotificationDispatch {
 
 switch ($Mode) {
   "daily-weekly" {
-    Invoke-NotificationDispatch -DispatchMode "daily"
+    Invoke-NotificationDispatch -DispatchMode "daily" -Slot $DailySlot
     if ((Get-Date).DayOfWeek -eq [System.DayOfWeek]::Friday) {
       Invoke-NotificationDispatch -DispatchMode "weekly"
     }
   }
   default {
-    Invoke-NotificationDispatch -DispatchMode $Mode
+    Invoke-NotificationDispatch -DispatchMode $Mode -Slot $DailySlot
   }
 }

@@ -27,5 +27,10 @@ class Notice:
     relevance_score: int = 0
     matched_keywords: list[str] = field(default_factory=list)
     attachments: list[Attachment] = field(default_factory=list)
+    review_status: str = "new"
+    review_note: str = ""
+    business_tier: str = "unclassified"
+    tier_reason: str = ""
+    tier_source: str = "automatic"
+    tiered_at: str = ""
     raw: dict[str, Any] = field(default_factory=dict)
-

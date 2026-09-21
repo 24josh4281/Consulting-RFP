@@ -12,7 +12,7 @@ from typing import Any
 from urllib.parse import urlencode, urljoin, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
-from .keyword_matcher import extension_from_url, has_any_term, is_excluded, normalize_text, score_text
+from .keyword_matcher import assess_g2b_title, extension_from_url, has_any_term, is_excluded, normalize_text, score_text
 from .models import Attachment, Notice
 
 
@@ -339,18 +339,16 @@ class G2BBidApiFetcher(BaseFetcher):
         if not isinstance(items, list):
             return []
         notices: list[Notice] = []
-        min_score = int(self.keyword_config.get("min_relevance_score", 2))
-
         for item in items:
             title = str(item.get("bidNtceNm") or item.get("bidNm") or item.get("ntceNm") or "").strip()
             if not title:
                 continue
-            combined_text = " ".join(str(value) for value in item.values() if value is not None)
-            if is_excluded(combined_text, self.keyword_config):
+            if is_excluded(title, self.keyword_config):
                 continue
-            match = score_text(combined_text, self.keyword_config)
-            if match.score < min_score or not has_domain_keyword(match.keywords, self.keyword_config):
+            assessment = assess_g2b_title(title, self.keyword_config)
+            if assessment.tier == "ignore":
                 continue
+            match = assessment.match
 
             bid_no = str(item.get("bidNtceNo") or item.get("bidNo") or "").strip()
             bid_ord = str(item.get("bidNtceOrd") or item.get("bidOrd") or "").strip()
@@ -358,6 +356,19 @@ class G2BBidApiFetcher(BaseFetcher):
             url = str(item.get("bidNtceDtlUrl") or item.get("ntceDtlUrl") or item.get("bidNtceUrl") or "").strip()
 
             attachments = self._extract_attachments(item)
+            needs_review = assessment.tier == "needs_review"
+            intake_note = (
+                "공고명에 강한 기후·온실가스·ETS·환경 컨설팅 신호가 없어 사람 검토가 필요합니다."
+                if needs_review
+                else ""
+            )
+            raw = dict(item)
+            raw["_tracker_intake"] = {
+                "rule": "g2b_title_policy_v1",
+                "tier": assessment.tier,
+                "title_matched_keywords": match.keywords,
+                "strong_keywords": assessment.strong_keywords,
+            }
             notices.append(
                 Notice(
                     source_id=self.source["id"],
@@ -370,27 +381,66 @@ class G2BBidApiFetcher(BaseFetcher):
                     buyer=str(item.get("dminsttNm") or item.get("ntceInsttNm") or ""),
                     budget=str(item.get("asignBdgtAmt") or item.get("presmptPrce") or ""),
                     procurement_method=str(item.get("cntrctCnclsMthdNm") or item.get("bidMethdNm") or ""),
-                    category="g2b_bid_api",
+                    category="g2b_bid_api_review" if needs_review else "g2b_bid_api",
                     relevance_score=match.score,
                     matched_keywords=match.keywords,
                     attachments=attachments,
-                    raw=item,
+                    review_status="needs_review" if needs_review else "new",
+                    review_note=intake_note,
+                    raw=raw,
                 )
             )
         return notices
 
     def _extract_attachments(self, item: dict[str, Any]) -> list[Attachment]:
-        attachments: list[Attachment] = []
-        for key, value in item.items():
-            if not value:
-                continue
-            key_lower = key.lower()
-            value_text = str(value)
-            if "url" in key_lower and extension_from_url(value_text):
-                attachments.append(
-                    Attachment(label=key, url=value_text, file_type=extension_from_url(value_text))
-                )
-        return attachments
+        return extract_g2b_spec_attachments(item)
+
+
+def extract_g2b_spec_attachments(item: dict[str, Any]) -> list[Attachment]:
+    """Return direct G2B notice attachments from an API item.
+
+    나라장터의 ``ntceSpecDocUrlN`` download endpoints do not expose a filename
+    extension in the URL.  The paired ``ntceSpecFileNmN`` field is therefore the
+    authoritative file-type signal.  Keeping this parser outside the fetcher also
+    lets existing saved raw API responses be repaired without another API call.
+    """
+    attachments: list[Attachment] = []
+    seen_urls: set[str] = set()
+
+    def add_attachment(label: object, url: object, file_type: str = "") -> None:
+        label_text = str(label or "").strip()
+        url_text = str(url or "").strip()
+        parsed = urlsplit(url_text)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc or url_text in seen_urls:
+            return
+        seen_urls.add(url_text)
+        attachments.append(
+            Attachment(
+                label=label_text or "나라장터 첨부",
+                url=url_text,
+                file_type=(file_type or extension_from_url(label_text) or extension_from_url(url_text)).lower(),
+            )
+        )
+
+    # The service returns these fields in numbered pairs.  Read the explicit pair
+    # first so an extension-less download URL still becomes a usable document link.
+    for sequence in range(1, 11):
+        document_url = item.get(f"ntceSpecDocUrl{sequence}")
+        file_name = item.get(f"ntceSpecFileNm{sequence}")
+        if document_url:
+            add_attachment(file_name or f"나라장터 첨부 {sequence}", document_url)
+
+    # Retain support for other providers/versions that return an ordinary URL with
+    # its extension already visible.  Direct named links above are de-duplicated.
+    for key, value in item.items():
+        if not value or "url" not in key.lower():
+            continue
+        value_text = str(value).strip()
+        file_type = extension_from_url(value_text)
+        if file_type:
+            add_attachment(key, value_text, file_type)
+
+    return attachments
 
 
 def build_fetcher(source: dict[str, Any], keyword_config: dict[str, Any], global_config: dict[str, Any], root_dir: Path) -> BaseFetcher:

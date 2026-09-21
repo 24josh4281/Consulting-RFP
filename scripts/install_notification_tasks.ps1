@@ -36,6 +36,7 @@ function Register-AlertTask {
   param(
     [string]$Name,
     [string]$Mode,
+    [string]$DailySlot = "",
     [string[]]$ScheduleArguments
   )
 
@@ -43,7 +44,8 @@ function Register-AlertTask {
     throw "Task already exists: $Name. Review it first, or rerun with -ReplaceExisting."
   }
 
-  $Action = "`"$PowerShellExe`" -NoProfile -ExecutionPolicy Bypass -File `"$CycleScript`" -Mode $Mode -Config `"$Config`" -NotificationConfig `"$NotificationConfig`" -Send"
+  $DailySlotArgument = if ([string]::IsNullOrWhiteSpace($DailySlot)) { "" } else { " -DailySlot $DailySlot" }
+  $Action = "`"$PowerShellExe`" -NoProfile -ExecutionPolicy Bypass -File `"$CycleScript`" -Mode $Mode$DailySlotArgument -Config `"$Config`" -NotificationConfig `"$NotificationConfig`" -Send"
   $arguments = @("/Create", "/TN", $Name, "/TR", $Action) + $ScheduleArguments
   if ($ReplaceExisting) {
     $arguments += "/F"
@@ -56,7 +58,8 @@ function Register-AlertTask {
 }
 
 Register-AlertTask -Name "$TaskPrefix-Immediate" -Mode "immediate" -ScheduleArguments @("/SC", "MINUTE", "/MO", "$PollMinutes")
-Register-AlertTask -Name "$TaskPrefix-Daily1700" -Mode "daily" -ScheduleArguments @("/SC", "DAILY", "/ST", "17:00")
+Register-AlertTask -Name "$TaskPrefix-Daily1000" -Mode "daily" -DailySlot "10:00" -ScheduleArguments @("/SC", "DAILY", "/ST", "10:00")
+Register-AlertTask -Name "$TaskPrefix-Daily1700" -Mode "daily" -DailySlot "17:00" -ScheduleArguments @("/SC", "DAILY", "/ST", "17:00")
 Register-AlertTask -Name "$TaskPrefix-WeeklyFriday1800" -Mode "weekly" -ScheduleArguments @("/SC", "WEEKLY", "/D", "FRI", "/ST", "18:00")
 
 Write-Host "[done] Real email schedules were registered. Check Task Scheduler history after the first run."

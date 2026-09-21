@@ -7,7 +7,8 @@ param(
   [string]$DocumentsHtml = "reports\rfp_documents.html",
   [string]$DocumentsCsv = "reports\rfp_documents.csv",
   [string]$BriefingHtml = "reports\briefing.html",
-  [string]$BriefingMarkdown = "reports\briefing.md"
+  [string]$BriefingMarkdown = "reports\briefing.md",
+  [string]$DocumentCache = "data\document_cache"
 )
 
 $ErrorActionPreference = "Stop"
@@ -27,6 +28,9 @@ function Invoke-Checked {
 }
 
 Invoke-Checked { python -m rfp_tracker sync --config $Config --db $Database --days $Days } "sync"
+Invoke-Checked {
+  python -m rfp_tracker extract-documents --db $Database --cache-dir $DocumentCache
+} "extract-documents"
 Invoke-Checked { python -m rfp_tracker render --db $Database --out $Dashboard } "render"
 Invoke-Checked { python -m rfp_tracker export-csv --db $Database --out $Csv } "export-csv"
 Invoke-Checked { python -m rfp_tracker render-documents --db $Database --html $DocumentsHtml --csv $DocumentsCsv } "render-documents"

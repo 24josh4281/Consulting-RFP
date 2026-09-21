@@ -4,7 +4,10 @@
   ],
   "min_relevance_score": 3,
   "timezone": "Asia/Seoul",
-  "daily_send_at": "17:00",
+  "daily_send_times": [
+    "10:00",
+    "17:00"
+  ],
   "weekly_send_day": "FRI",
   "weekly_send_at": "18:00"
 }

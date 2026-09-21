@@ -6,6 +6,8 @@ import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
+
+from .tiering import TIER_1, TIER_2, TIER_3, tier_short_label
 from zoneinfo import ZoneInfo
 
 from .storage import list_notices
@@ -75,6 +77,9 @@ def notice_view(row: Any, now: datetime | None = None) -> dict[str, Any]:
         "days_remaining": days_remaining,
         "relevance_score": int(row["relevance_score"]),
         "review_status": str(row["review_status"]),
+        "business_tier": str(row["business_tier"] if "business_tier" in row.keys() else "unclassified"),
+        "tier_reason": str(row["tier_reason"] if "tier_reason" in row.keys() else ""),
+        "tier_source": str(row["tier_source"] if "tier_source" in row.keys() else "automatic"),
         "matched_keywords": sorted(_keyword_set(row["matched_keywords"])),
         "attachments": attachments,
         "document_count": len(attachments),
@@ -124,7 +129,12 @@ def build_briefing(
 ) -> dict[str, Any]:
     current = now or seoul_now()
     views = [notice_view(row, current) for row in list_notices(connection)]
-    eligible = [item for item in views if item["relevance_score"] >= min_score and item["review_status"] != "not_relevant"]
+    eligible = [
+        item
+        for item in views
+        if item["relevance_score"] >= min_score
+        and item["review_status"] not in {"not_relevant", "closed", "needs_review"}
+    ]
     today_new = [
         item
         for item in eligible
@@ -138,7 +148,16 @@ def build_briefing(
     missing_documents = [item for item in eligible if item["document_count"] == 0]
     watched = [item for item in eligible if item["review_status"] in {"watch", "interesting"}]
     high_score_missing = [item for item in missing_documents if item["relevance_score"] >= min_score + 2]
-    action_queue = _deduplicate(urgent + today_new + high_score_missing + watched)[:limit]
+    tier_order = {TIER_1: 0, TIER_2: 1, TIER_3: 2}
+    action_queue = sorted(
+        _deduplicate(urgent + today_new + high_score_missing + watched),
+        key=lambda item: (
+            tier_order.get(item["business_tier"], 3),
+            item["days_remaining"] is None,
+            item["days_remaining"] if item["days_remaining"] is not None else 9999,
+            -item["relevance_score"],
+        ),
+    )[:limit]
     return {
         "generated_at": current,
         "due_days": due_days,
@@ -151,6 +170,9 @@ def build_briefing(
             "urgent": len(urgent),
             "missing_documents": len(missing_documents),
             "watching": len(watched),
+            "tier_1": sum(1 for item in eligible if item["business_tier"] == TIER_1),
+            "tier_2": sum(1 for item in eligible if item["business_tier"] == TIER_2),
+            "tier_3": sum(1 for item in eligible if item["business_tier"] == TIER_3),
         },
         "action_queue": action_queue,
         "new_today": today_new[:limit],
@@ -176,7 +198,9 @@ def _markdown_item(item: dict[str, Any]) -> str:
     deadline = _display_deadline(item).replace("|", "\\|")
     keywords = ", ".join(item["matched_keywords"]) or "-"
     link = f"[공고 열기]({item['url']})" if item["url"] else "링크 미수집"
-    return f"| {title} | {source} | {deadline} | {item['relevance_score']} | {keywords} | {link} |"
+    tier = tier_short_label(item["business_tier"])
+    reason = item["tier_reason"].replace("|", "\\|") or "원문 확인 필요"
+    return f"| {tier} | {title} | {source} | {deadline} | {item['relevance_score']} | {reason} | {keywords} | {link} |"
 
 
 def briefing_markdown(briefing: dict[str, Any]) -> str:
@@ -189,9 +213,9 @@ def briefing_markdown(briefing: dict[str, Any]) -> str:
         "",
         "## 오늘의 요약",
         "",
-        "| 전체 | 기준점수 이상 | 오늘 수집 | 미검토 | D-{} 이내 | 문서 미수집 | 관심/추적 |".format(briefing["due_days"]),
-        "|---:|---:|---:|---:|---:|---:|---:|",
-        "| {total_notices} | {eligible_notices} | {new_today} | {unreviewed} | {urgent} | {missing_documents} | {watching} |".format(**summary),
+        "| 전체 | 기준점수 이상 | Tier 1 | Tier 2 | Tier 3 | 오늘 수집 | D-{} 이내 | 문서 미수집 |".format(briefing["due_days"]),
+        "|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| {total_notices} | {eligible_notices} | {tier_1} | {tier_2} | {tier_3} | {new_today} | {urgent} | {missing_documents} |".format(**summary),
         "",
         "## 우선 확인 공고",
         "",
@@ -199,8 +223,8 @@ def briefing_markdown(briefing: dict[str, Any]) -> str:
     if briefing["action_queue"]:
         lines.extend(
             [
-                "| 공고 | 출처 | 마감 | 점수 | 키워드 | 원문 |",
-                "|---|---|---|---:|---|---|",
+                "| Tier | 공고 | 출처 | 마감 | 점수 | 분류 근거 | 키워드 | 원문 |",
+                "|---|---|---|---|---:|---|---|---|",
                 *[_markdown_item(item) for item in briefing["action_queue"]],
             ]
         )
@@ -211,8 +235,8 @@ def briefing_markdown(briefing: dict[str, Any]) -> str:
     if briefing["missing_documents"]:
         lines.extend(
             [
-                "| 공고 | 출처 | 마감 | 점수 | 키워드 | 원문 |",
-                "|---|---|---|---:|---|---|",
+                "| Tier | 공고 | 출처 | 마감 | 점수 | 분류 근거 | 키워드 | 원문 |",
+                "|---|---|---|---|---:|---|---|---|",
                 *[_markdown_item(item) for item in briefing["missing_documents"]],
             ]
         )
@@ -243,16 +267,18 @@ def briefing_html(briefing: dict[str, Any]) -> str:
 
     def item_rows(items: list[dict[str, Any]]) -> str:
         if not items:
-            return '<tr><td colspan="6">해당 공고가 없습니다.</td></tr>'
+            return '<tr><td colspan="8">해당 공고가 없습니다.</td></tr>'
         rows: list[str] = []
         for item in items:
             link = f'<a href="{html.escape(item["url"], quote=True)}" target="_blank" rel="noreferrer">원문</a>' if item["url"] else "미수집"
             rows.append(
                 "<tr>"
                 f"<td>{html.escape(item['title'])}</td>"
+                f"<td>{html.escape(tier_short_label(item['business_tier']))}</td>"
                 f"<td>{html.escape(item['source_name'])}</td>"
                 f"<td>{html.escape(_display_deadline(item))}</td>"
                 f"<td>{item['relevance_score']}</td>"
+                f"<td>{html.escape(item['tier_reason'] or '원문 확인 필요')}</td>"
                 f"<td>{html.escape(', '.join(item['matched_keywords']) or '-')}</td>"
                 f"<td>{link}</td>"
                 "</tr>"
@@ -273,6 +299,9 @@ def briefing_html(briefing: dict[str, Any]) -> str:
         for label, value in [
             ("전체 공고", summary["total_notices"]),
             ("기준점수 이상", summary["eligible_notices"]),
+            ("Tier 1", summary["tier_1"]),
+            ("Tier 2", summary["tier_2"]),
+            ("Tier 3", summary["tier_3"]),
             ("오늘 수집", summary["new_today"]),
             (f"D-{briefing['due_days']} 이내", summary["urgent"]),
             ("문서 미수집", summary["missing_documents"]),
@@ -296,8 +325,8 @@ section.panel{{background:#fff;border:1px solid #d8e2db;border-radius:10px;paddi
 <h1>기후·GHG·ETS 입찰 브리핑</h1>
 <p class="muted">생성 시각: {generated_at}</p>
 <div class="cards">{cards}</div>
-<section class="panel"><h2>우선 확인 공고</h2><table><thead><tr><th>공고</th><th>출처</th><th>마감</th><th>점수</th><th>키워드</th><th>원문</th></tr></thead><tbody>{item_rows(briefing['action_queue'])}</tbody></table></section>
-<section class="panel"><h2>문서 확인 필요</h2><table><thead><tr><th>공고</th><th>출처</th><th>마감</th><th>점수</th><th>키워드</th><th>원문</th></tr></thead><tbody>{item_rows(briefing['missing_documents'])}</tbody></table></section>
+<section class="panel"><h2>우선 확인 공고</h2><table><thead><tr><th>공고</th><th>Tier</th><th>출처</th><th>마감</th><th>점수</th><th>분류 근거</th><th>키워드</th><th>원문</th></tr></thead><tbody>{item_rows(briefing['action_queue'])}</tbody></table></section>
+<section class="panel"><h2>문서 확인 필요</h2><table><thead><tr><th>공고</th><th>Tier</th><th>출처</th><th>마감</th><th>점수</th><th>분류 근거</th><th>키워드</th><th>원문</th></tr></thead><tbody>{item_rows(briefing['missing_documents'])}</tbody></table></section>
 <section class="panel"><h2>유사 공고 신호</h2><ul>{similar}</ul></section>
 <p class="muted">원문 공고와 첨부 RFP/과업지시서를 확인한 뒤 입찰 자격과 제안 가능성을 판단하세요.</p>
 </body></html>"""
