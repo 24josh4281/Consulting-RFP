@@ -4,7 +4,7 @@
 
 현재 버전은 “안전한 1차 자동화”에 집중합니다.
 
-- 나라장터 용역 공고의 환경·기후·온실가스·배출권·ETS OpenAPI 필터 준비
+- 나라장터 용역·물품·공사·외자 입찰의 현재 접수 중인 전체 공고 수집
 - 온실가스종합정보센터(GIR) 공개 입찰 게시판의 상세 공고·RFP 링크 연결
 - 민간 대기업/계열사 입찰 페이지용 범용 HTML 수집기
 - 기후·GHG·ETS·ESG 키워드 기반 관련성 점수화
@@ -100,11 +100,14 @@ $env:DATA_GO_KR_SERVICE_KEY="발급받은_서비스키"
 python -m rfp_tracker source-toggle --source-id g2b_service_bids --enable --out configs\sources.local.json
 ```
 
-주의:
+수집 범위와 운영 방식:
 
+- 용역·물품·공사·외자 4개 공식 검색 API에서 최근 공고를 반복 수집하고, 별도 일일 조회는 공고명 키워드 제한 없이 현재 접수 중인 전체 공고를 저장합니다.
+- 전체 조회는 최근 90일을 API 허용 범위인 최대 30일 구간으로 나눠 조회하고, `totalCount`에 맞춰 페이지를 끝까지 읽습니다. 입찰 시작 전 공고와 마감이 지난 공고는 제외합니다.
+- 일일 전체 조회는 최대 500 API 요청, 구간별 최대 100페이지로 안전 제한합니다. 최근 30일 조회의 4개 유형 합산 API 응답은 약 8,756건이었으며, 이 중 입찰 시작 전 공고는 실제 수집에서 제외됩니다. 전체 후보는 Tier 1·2·3으로 자동 분류하고 입찰 판단은 담당자가 확인해야 합니다.
+- 과업지시서 자동 다운로드·요약은 Tier 1·2에만 실행하며 Tier 3는 공식 공고·첨부 원문 링크로 확인합니다.
 - 서비스키를 코드 파일에 직접 저장하지 마세요.
-- API 호출량 제한이 있으므로 처음에는 `--days 3`, `max_pages: 1`처럼 작게 테스트하세요.
-- 공고 원문/RFP/과업지시서 첨부파일은 사이트·API별 구조가 달라서, 출처별로 직접 공개 링크만 연결·검증합니다.
+- 공고 원문/RFP/과업지시서 첨부파일은 출처별로 직접 공개된 링크만 연결·검증합니다.
 - 나라장터 API 원본에 `ntceSpecDocUrl`과 파일명이 저장된 경우, 아래 backfill 명령으로 이미 수집한 공고의 공식 첨부 링크를 API 재호출 없이 복원합니다. 명시적 URL이 없는 `missing`은 RFP 부재를 뜻하지 않으므로 공식 공고의 `파일첨부`를 확인하세요.
 
 ```powershell
@@ -230,7 +233,7 @@ python -m rfp_tracker export-workbench-json --db data\rfp_tracker_official.db --
 node .\scripts\build_rfp_workbench_workbook.mjs --input outputs\rfp_workbench_data.json --output outputs\rfp_workbench.xlsx
 ~~~
 
-The workbench begins with an official-source-only Tier 1 priority area; sample records remain in the full list but are not treated as real opportunities. The workbook contains five sheets: Dashboard, Notices, Document Summary, Sources, and Bid Fit Review. Its yellow input columns provide a bordered review grid for consulting fit, qualifications, proposed team, bid decision, risks, and reviewer notes. It stores the listing amount and document-derived amount in separate fields with the source basis and evidence excerpt.
+The workbench begins with an official-source-only Tier 1 priority area; sample records remain in the full list but are not treated as real opportunities. Notices exactly 7 or 3 calendar days from their deadline receive D-7/D-3 priority labels in the dashboards, email briefing and Excel export. The workbook contains five sheets: Dashboard, Notices, Document Summary, Sources, and Bid Fit Review. Its yellow input columns provide a bordered review grid for consulting fit, qualifications, proposed team, bid decision, risks, and reviewer notes. It stores the listing amount and document-derived amount in separate fields with the source basis and evidence excerpt.
 
 Use the local command below when a reviewed decision should also appear in the internal dashboard. It changes only the separate bid-fit review record, never the source notice, attachment, or document evidence.
 
@@ -275,7 +278,7 @@ python -m rfp_tracker sources --config configs\sources.local.json
 ```
 
 - **온실가스종합정보센터(GIR) 입찰공고**: 공개 상세 화면에서 공고일·전자입찰 여부·공개 첨부 링크를 수집합니다. 실제 제한 검증에서 기후/ETS 공고 2건과 제안요청서·입찰공고문·긴급입찰사유서 링크 총 6건을 확인했습니다. 직접 공개 HWPX는 cache에 저장해 과업 요약과 금액 근거를 추출할 수 있습니다.
-- **나라장터 용역 입찰 API**: 공식 API로 최근 용역 공고를 읽고, 환경·기후·온실가스·배출권·ETS·LCA·탄소발자국·환경영향평가 키워드로 필터링합니다. 공공데이터포털 서비스키가 있어야 실제 수집됩니다.
+- **나라장터 입찰공고 API**: 용역·물품·공사·외자 4개 공식 API를 통해 최근 공고 및 현재 입찰 접수 중인 전체 공고를 수집합니다. 전체 조회는 공고명 키워드로 제한하지 않고, 기후·환경 키워드와 이너젠 적합도 기준으로 Tier를 보조 분류합니다. 공공데이터포털 서비스키가 있어야 실제 수집됩니다.
 - **나라장터 발주계획·사전규격·계약과정**: 조기 신호와 공고-낙찰-계약 연결을 위한 우선 출처로 카탈로그화했습니다. 전용 어댑터는 다음 단계입니다.
 - **환경부 계약·입찰 게시판**: 공식 후보로 등록했지만, 목록 구조와 이용 정책을 별도로 확인하기 전에는 비활성화 상태입니다.
 - **민간 대기업 포털**: 로그인·협력사 권한·약관 확인이 필요한 경우가 많아 기본 비활성화 상태를 유지합니다.

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from .models import Attachment, Notice
@@ -97,6 +97,16 @@ CREATE TABLE IF NOT EXISTS sync_runs (
   inserted_or_updated_count INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL,
   message TEXT
+);
+
+CREATE TABLE IF NOT EXISTS g2b_open_reconciliation_runs (
+  run_date TEXT PRIMARY KEY,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  candidate_count INTEGER NOT NULL DEFAULT 0,
+  inserted_count INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL,
+  message TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS notification_settings (
@@ -204,6 +214,88 @@ def finish_run(
             status,
             message,
             run_id,
+        ),
+    )
+    connection.commit()
+
+
+def get_g2b_open_reconciliation(connection: sqlite3.Connection, run_date: str) -> sqlite3.Row | None:
+    return connection.execute(
+        "SELECT * FROM g2b_open_reconciliation_runs WHERE run_date = ?",
+        (run_date,),
+    ).fetchone()
+
+
+def start_g2b_open_reconciliation(
+    connection: sqlite3.Connection,
+    run_date: str,
+    *,
+    force: bool = False,
+    retry_after_minutes: int = 240,
+) -> bool:
+    """Claim the once-per-day open-G2B reconciliation slot in the local database."""
+    existing = get_g2b_open_reconciliation(connection, run_date)
+    now = datetime.now()
+    if existing and not force:
+        if str(existing["status"]) == "success":
+            return False
+        if str(existing["status"]) == "running":
+            try:
+                started = datetime.fromisoformat(str(existing["started_at"]))
+                if now - started < timedelta(minutes=retry_after_minutes):
+                    return False
+            except ValueError:
+                return False
+        if str(existing["status"]) == "failed":
+            finished_text = str(existing["finished_at"] or existing["started_at"])
+            try:
+                finished = datetime.fromisoformat(finished_text)
+                if now - finished < timedelta(minutes=retry_after_minutes):
+                    return False
+            except ValueError:
+                return False
+
+    connection.execute(
+        """
+        INSERT INTO g2b_open_reconciliation_runs (
+          run_date, started_at, finished_at, candidate_count, inserted_count, status, message
+        ) VALUES (?, ?, NULL, 0, 0, 'running', '')
+        ON CONFLICT(run_date) DO UPDATE SET
+          started_at = excluded.started_at,
+          finished_at = NULL,
+          candidate_count = 0,
+          inserted_count = 0,
+          status = 'running',
+          message = ''
+        """,
+        (run_date, now.isoformat(timespec="seconds")),
+    )
+    connection.commit()
+    return True
+
+
+def finish_g2b_open_reconciliation(
+    connection: sqlite3.Connection,
+    run_date: str,
+    *,
+    candidate_count: int,
+    inserted_count: int,
+    status: str,
+    message: str = "",
+) -> None:
+    connection.execute(
+        """
+        UPDATE g2b_open_reconciliation_runs
+        SET finished_at = ?, candidate_count = ?, inserted_count = ?, status = ?, message = ?
+        WHERE run_date = ?
+        """,
+        (
+            datetime.now().isoformat(timespec="seconds"),
+            candidate_count,
+            inserted_count,
+            status,
+            message,
+            run_date,
         ),
     )
     connection.commit()

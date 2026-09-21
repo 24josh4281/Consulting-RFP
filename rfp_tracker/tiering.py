@@ -86,9 +86,9 @@ TIER_3_SCIENCE_SIGNALS = (
     "파우더",
 )
 
-# These are direct Innergen-style consulting themes.  They take priority over an
-# equipment/IT word because, for example, an ETS information-system improvement still
-# belongs in the ETS consulting opportunity queue.
+# These are direct Innergen-style consulting themes.  A specific equipment purchase/
+# installation without a consulting or analysis work signal is classified as Tier 2 first;
+# this prevents an ETS keyword from lifting customer capex support into Tier 1.
 TIER_1_EXPLICIT_SIGNALS = (
     "온실가스 외부사업",
     "외부사업",
@@ -222,6 +222,24 @@ TIER_2_SUPPORT_SIGNALS = (
     "관리 대행",
 )
 
+TIER_2_PHYSICAL_SUPPORT_SIGNALS = (
+    "설비",
+    "시설",
+    "장비",
+    "시공",
+    "공사",
+    "설치",
+    "보수",
+    "유지보수",
+    "정비",
+    "처리시설",
+    "처리장",
+    "정화",
+    "공법",
+    "제품",
+    "환경개선",
+)
+
 TIER_2_REFERRAL_SIGNALS = (
     "환경영향평가",
     "사후환경영향조사",
@@ -299,14 +317,6 @@ def assess_innergen_tier(
             non_consulting,
         )
 
-    explicit_tier_1 = _signals(text, TIER_1_EXPLICIT_SIGNALS)
-    if explicit_tier_1:
-        return TierAssessment(
-            TIER_1,
-            _reason("이너젠 핵심 기후·GHG·ETS 컨설팅 신호", explicit_tier_1),
-            explicit_tier_1,
-        )
-
     science_only = _signals(text, TIER_3_SCIENCE_SIGNALS)
     if science_only:
         return TierAssessment(
@@ -316,6 +326,24 @@ def assess_innergen_tier(
         )
 
     tier_2_domain = _signals(text, TIER_2_DOMAIN_SIGNALS)
+    physical_support = _signals(text, TIER_2_PHYSICAL_SUPPORT_SIGNALS)
+    tier_1_work = _signals(text, TIER_1_WORK_SIGNALS)
+    if tier_2_domain and physical_support and not tier_1_work:
+        signals = _combined_signals(tier_2_domain, physical_support)
+        return TierAssessment(
+            TIER_2,
+            _reason("기후·환경 관련 설비 구매·설치·공사 등 고객사 지원 신호", signals),
+            signals,
+        )
+
+    explicit_tier_1 = _signals(text, TIER_1_EXPLICIT_SIGNALS)
+    if explicit_tier_1:
+        return TierAssessment(
+            TIER_1,
+            _reason("이너젠 핵심 기후·GHG·ETS 컨설팅 신호", explicit_tier_1),
+            explicit_tier_1,
+        )
+
     tier_2_support = _signals(text, TIER_2_SUPPORT_SIGNALS)
     if tier_2_domain and tier_2_support:
         signals = _combined_signals(tier_2_domain, tier_2_support)
@@ -335,7 +363,6 @@ def assess_innergen_tier(
         )
 
     tier_1_domain = _signals(text, TIER_1_DOMAIN_SIGNALS)
-    tier_1_work = _signals(text, TIER_1_WORK_SIGNALS)
     if tier_1_domain and tier_1_work:
         signals = _combined_signals(tier_1_domain, tier_1_work)
         return TierAssessment(

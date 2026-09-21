@@ -17,6 +17,7 @@ from .config import read_json, write_json
 from .storage import (
     get_notification_setting,
     last_successful_notification_at,
+    list_notices,
     list_notices_since,
     list_unnotified_notices,
     notification_delivery_sent,
@@ -243,9 +244,10 @@ def _notice_lines(items: list[dict[str, Any]]) -> list[str]:
     lines: list[str] = []
     for item in items:
         deadline = _display_deadline(item)
+        marker = f"[{item['deadline_priority']}] " if item.get("deadline_priority") else ""
         lines.extend(
             [
-                f"- {item['title']}",
+                f"- {marker}{item['title']}",
                 f"  출처: {item['source_name']} | 점수: {item['relevance_score']} | 마감: {deadline}",
                 f"  분류 근거: {item.get('tier_reason') or '원문 확인 필요'}",
                 f"  키워드: {', '.join(item['matched_keywords']) or '-'}",
@@ -298,11 +300,18 @@ def _notice_table(items: list[dict[str, Any]], tier: str, accent: str, tint: str
         source = html.escape(str(item["source_name"]))
         reason = html.escape(str(item.get("tier_reason") or "원문 확인 필요"))
         title = html.escape(str(item["title"]))
+        deadline_priority = str(item.get("deadline_priority") or "")
+        priority_badge = (
+            f'<span style="display:inline-block;margin:0 0 6px 0;padding:3px 7px;border:1px solid {"#C53030" if deadline_priority == "D-3" else "#B7791F"};'
+            f'background:{"#FBE7E5" if deadline_priority == "D-3" else "#FFF3D6"};color:{"#8A2A26" if deadline_priority == "D-3" else "#7B5510"};font-size:11px;font-weight:800;">'
+            f'{html.escape(deadline_priority)} 중요 마감</span><br>'
+            if deadline_priority else ""
+        )
         keyword_text = html.escape(", ".join(item["matched_keywords"]) or "-")
         rows.append(
             "<tr>"
             f'<td style="border:1px solid #D1D5DB;padding:12px;vertical-align:top;">'
-            f'<div style="font-size:14px;font-weight:700;line-height:1.45;color:#16231D;">{title}</div>'
+            f'{priority_badge}<div style="font-size:14px;font-weight:700;line-height:1.45;color:#16231D;">{title}</div>'
             f'<div style="margin-top:6px;color:#4B5563;font-size:12px;">{reason}</div>'
             f'<div style="margin-top:6px;color:#6B7280;font-size:12px;">키워드: {keyword_text}</div></td>'
             f'<td style="border:1px solid #D1D5DB;padding:12px;vertical-align:top;font-size:13px;">{source}<br>'
@@ -399,6 +408,7 @@ def _email_payload(
     now: datetime,
     *,
     daily_slot: str = "17:00",
+    deadline_alerts: list[dict[str, Any]] | None = None,
 ) -> EmailPayload | None:
     date_label = now.strftime("%Y-%m-%d")
     if mode == "immediate" and not items:
@@ -427,6 +437,15 @@ def _email_payload(
 
     grouped = _items_by_tier(items)
     text_lines = [subject, "", intro, ""]
+    if mode in {"daily", "weekly"} and deadline_alerts:
+        alert_groups = _items_by_tier(deadline_alerts)
+        text_lines.append("[D-7 / D-3 중요 마감 · Tier 1/2]")
+        for tier in (TIER_1, TIER_2):
+            if alert_groups[tier]:
+                text_lines.extend(
+                    [f"[{tier_label(tier)}] {len(alert_groups[tier])}건", *_notice_lines(alert_groups[tier])]
+                )
+        text_lines.append("")
     sections = TIER_SECTIONS if mode in {"daily", "weekly"} else (TIER_SECTIONS[0],)
     for tier, title, description, _accent, _tint in sections:
         text_lines.extend([f"[{title}] {len(grouped[tier])}건", description, *_notice_lines(grouped[tier]), ""])
@@ -441,6 +460,26 @@ def _email_payload(
         include_all_tiers=mode in {"daily", "weekly"},
         generated_at=now,
     )
+    if mode in {"daily", "weekly"} and deadline_alerts:
+        alert_groups = _items_by_tier(deadline_alerts)
+        alert_sections = []
+        for tier, title, _description, accent, tint in TIER_SECTIONS[:2]:
+            if not alert_groups[tier]:
+                continue
+            alert_sections.append(
+                '<div style="margin-top:12px;">'
+                f'<div style="font-size:13px;font-weight:800;color:{accent};margin:0 0 6px 0;">{html.escape(title)} · {len(alert_groups[tier])}건</div>'
+                f'{_notice_table(alert_groups[tier], tier, accent, tint)}</div>'
+            )
+        alert_html = (
+            '<table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td style="padding:0 26px 22px 26px;">'
+            '<div style="border-left:5px solid #C53030;padding:2px 0 2px 10px;margin:0 0 8px 0;">'
+            f'<div style="font-size:16px;font-weight:800;color:#8A2A26;">D-7 / D-3 중요 마감 <span style="font-size:13px;color:#4B5563;">{len(deadline_alerts)}건</span></div>'
+            '<div style="font-size:12px;color:#4B5563;line-height:1.5;margin-top:3px;">Tier 1/2 공고 중 마감일까지 정확히 7일 또는 3일 남은 건입니다. Tier 3도 공고 목록에서 마감 배지로 확인할 수 있습니다.</div></div>'
+            f'{"".join(alert_sections)}</td></tr></table>'
+        )
+        footer_marker = '<tr><td style="padding:16px 26px 22px 26px;background:#F8FAF9;'
+        html_body = html_body.replace(footer_marker, f'{alert_html}{footer_marker}', 1)
     return EmailPayload(notification_type, keys, notice_ids, subject, text, html_body)
 
 
@@ -553,7 +592,20 @@ def dispatch_notifications(
                 for row in list_notices_since(connection, since_at, min_score=min_score)
                 if _notice_is_not_historical(row, baseline_at)
             ]
-            payload = _email_payload(mode, items, current, daily_slot=normalized_daily_slot)
+            deadline_alerts = []
+            for row in list_notices(connection):
+                if str(row["review_status"] or "") in {"not_relevant", "closed"}:
+                    continue
+                view = notice_view(row, current)
+                if view["deadline_priority"] and view["business_tier"] in {TIER_1, TIER_2}:
+                    deadline_alerts.append(view)
+            payload = _email_payload(
+                mode,
+                items,
+                current,
+                daily_slot=normalized_daily_slot,
+                deadline_alerts=deadline_alerts,
+            )
         else:
             raise ValueError("mode must be immediate, daily, weekly, or test")
 

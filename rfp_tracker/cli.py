@@ -3,10 +3,19 @@ from __future__ import annotations
 import argparse
 import csv
 import sys
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from .api_keys import get_api_key_status
-from .briefing import build_briefing, render_briefing_html, write_briefing_markdown
+from .briefing import (
+    build_briefing,
+    deadline_priority_label,
+    parse_notice_datetime,
+    render_briefing_html,
+    seoul_now,
+    write_briefing_markdown,
+)
 from .companies import (
     discover_company_portals,
     fetch_krx_listed_companies,
@@ -43,10 +52,12 @@ from .storage import (
     connect,
     finish_run,
     get_bid_fit_review,
+    finish_g2b_open_reconciliation,
     list_bid_fit_reviews,
     list_notices,
     review_stats,
     start_run,
+    start_g2b_open_reconciliation,
     tier_stats,
     update_notice_tier,
     update_notice_review,
@@ -74,6 +85,91 @@ VALID_REVIEW_STATUSES = {
     "lost",
     "closed",
 }
+
+
+SEOUL_TZ = ZoneInfo("Asia/Seoul")
+
+
+def reconcile_open_g2b_command(args: argparse.Namespace) -> int:
+    source_config = read_json(args.config)
+    keyword_config = read_json(args.keywords)
+    global_config = source_config.get("global", {})
+    g2b_sources = [
+        source
+        for source in enabled_sources(source_config)
+        if source.get("type") == "g2b_bid_api"
+    ]
+    if not g2b_sources:
+        print("[skip] 활성화된 나라장터 API 출처가 없습니다.")
+        return 0
+
+    run_date = datetime.now(SEOUL_TZ).date().isoformat()
+    connection = connect(args.db)
+    if not start_g2b_open_reconciliation(connection, run_date, force=args.force):
+        if not args.quiet_if_done:
+            print(f"[skip] {run_date} 나라장터 현재공고 보정 조회는 이미 완료했거나 진행 중입니다.")
+        connection.close()
+        return 0
+
+    candidate_count = 0
+    inserted_count = 0
+    try:
+        days = args.days or int(global_config.get("g2b_open_reconcile_days", 90))
+        max_pages = int(global_config.get("g2b_open_reconcile_max_pages_per_term", 3))
+        collect_all_current = bool(global_config.get("g2b_open_collect_all_current", False))
+        max_pages_per_query = int(global_config.get("g2b_open_unfiltered_max_pages_per_query", 100))
+        max_requests = int(global_config.get("g2b_open_reconcile_max_requests", 500))
+        terms = list(global_config.get("g2b_open_search_terms", []))
+        closed_exclusion = str(
+            global_config.get("g2b_open_reconcile_closed_notice_exclusion", "Y")
+        )
+        for source in g2b_sources:
+            fetcher = build_fetcher(source, keyword_config, global_config, ROOT_DIR)
+            notices = fetcher.fetch_open_notices(
+                days=days,
+                search_terms=terms,
+                max_pages_per_term=max_pages,
+                closed_notice_exclusion=closed_exclusion,
+                include_all_notices=collect_all_current,
+                max_pages_per_query=max_pages_per_query,
+                max_requests=max_requests,
+            )
+            print(f"[reconcile] {source['id']}: 현재 유효 후보 {len(notices)}건")
+            for notice in notices:
+                assessment = assess_innergen_tier(notice.title, category=notice.category)
+                notice.business_tier = assessment.tier
+                notice.tier_reason = assessment.reason
+                notice.tier_source = "automatic"
+                if upsert_notice(connection, notice):
+                    inserted_count += 1
+                candidate_count += 1
+        finish_g2b_open_reconciliation(
+            connection,
+            run_date,
+            candidate_count=candidate_count,
+            inserted_count=inserted_count,
+            status="success",
+            message="",
+        )
+        print(
+            f"[done] 나라장터 현재공고 보정 조회: {candidate_count}개 후보, "
+            f"신규 {inserted_count}건, 기간 {days}일, "
+            f"조회범위={'전체 현재공고' if collect_all_current else '검색어 일치'}"
+        )
+        return 0
+    except Exception as exc:  # noqa: BLE001 - 기록된 에러는 예외 종류만 보여 줍니다.
+        finish_g2b_open_reconciliation(
+            connection,
+            run_date,
+            candidate_count=candidate_count,
+            inserted_count=inserted_count,
+            status="failed",
+            message=type(exc).__name__,
+        )
+        print(f"[warn] 나라장터 현재공고 보정 조회 실패 ({type(exc).__name__}).")
+        return 0 if args.best_effort else 1
+    finally:
+        connection.close()
 
 
 def sync_command(args: argparse.Namespace) -> int:
@@ -201,6 +297,7 @@ def export_csv_command(args: argparse.Namespace) -> int:
                 "buyer",
                 "published_at",
                 "deadline_at",
+                "deadline_priority",
                 "procurement_method",
                 "budget",
                 "relevance_score",
@@ -224,6 +321,11 @@ def export_csv_command(args: argparse.Namespace) -> int:
                     row["buyer"],
                     row["published_at"],
                     row["deadline_at"],
+                    deadline_priority_label(
+                        (deadline.date() - seoul_now().date()).days
+                        if (deadline := parse_notice_datetime(row["deadline_at"]))
+                        else None
+                    ),
                     row["procurement_method"],
                     row["budget"],
                     row["relevance_score"],
@@ -595,7 +697,7 @@ def g2b_title_audit_command(args: argparse.Namespace) -> int:
         """
         SELECT id, title, review_status
         FROM notices
-        WHERE source_id = 'g2b_service_bids'
+        WHERE substr(source_id, 1, 4) = 'g2b_'
         ORDER BY id ASC
         """
     ).fetchall()
@@ -762,6 +864,19 @@ def build_parser() -> argparse.ArgumentParser:
     sync.add_argument("--db", default=str(ROOT_DIR / "data" / "rfp_tracker.db"))
     sync.add_argument("--days", type=int, default=14)
     sync.set_defaults(func=sync_command)
+
+    reconcile_open_g2b = subparsers.add_parser(
+        "reconcile-open-g2b",
+        help="나라장터 90일 범위의 기한 미경과 기후·환경 입찰을 하루 한 번 보정 수집",
+    )
+    reconcile_open_g2b.add_argument("--config", default=str(DEFAULT_LOCAL_CONFIG))
+    reconcile_open_g2b.add_argument("--keywords", default=str(DEFAULT_KEYWORDS))
+    reconcile_open_g2b.add_argument("--db", default=str(ROOT_DIR / "data" / "rfp_tracker_official.db"))
+    reconcile_open_g2b.add_argument("--days", type=int, help="기본값은 source config의 G2B 보정 조회 기간입니다.")
+    reconcile_open_g2b.add_argument("--force", action="store_true", help="오늘 실행 기록이 있어도 다시 조회합니다.")
+    reconcile_open_g2b.add_argument("--best-effort", action="store_true", help="실패해도 주기 수집을 계속할 수 있도록 종료 코드를 0으로 반환합니다.")
+    reconcile_open_g2b.add_argument("--quiet-if-done", action="store_true", help="오늘 이미 처리했다면 출력 없이 종료합니다.")
+    reconcile_open_g2b.set_defaults(func=reconcile_open_g2b_command)
 
     render = subparsers.add_parser("render", help="전체 공고 작업대 HTML 생성")
     render.add_argument("--db", default=str(ROOT_DIR / "data" / "rfp_tracker.db"))

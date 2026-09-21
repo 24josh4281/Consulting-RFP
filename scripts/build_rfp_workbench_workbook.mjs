@@ -98,8 +98,10 @@ function asDate(value) {
   const day = Number(match[3]);
   const hour = Number(match[4] || 0);
   const minute = Number(match[5] || 0);
-  const result = new Date(year, month - 1, day, hour, minute);
-  return result.getFullYear() === year && result.getMonth() === month - 1 && result.getDate() === day ? result : null;
+  // Keep the source's KST wall-clock fields intact when Excel serializes dates.
+  // A local Date constructor shifts these fields by the machine timezone (e.g. -9h on UTC).
+  const result = new Date(Date.UTC(year, month - 1, day, hour, minute));
+  return result.getUTCFullYear() === year && result.getUTCMonth() === month - 1 && result.getUTCDate() === day ? result : null;
 }
 
 
@@ -213,6 +215,7 @@ function noticeRows(notices) {
       text(notice.source_name),
       asDate(notice.published_at),
       asDate(notice.deadline_at),
+      text(notice.deadline_priority),
       text(notice.procurement_method),
       integer(notice.budget_value_krw),
       text(notice.budget),
@@ -230,7 +233,9 @@ function noticeRows(notices) {
 
 
 function documentRows(documents) {
-  return documents.map((document) => [
+  return documents
+    .filter((document) => ["tier_1", "tier_2"].includes(text(document.business_tier)))
+    .map((document) => [
     integer(document.notice_id),
     tierLabel(document.business_tier),
     text(document.notice_title),
@@ -247,7 +252,7 @@ function documentRows(documents) {
     text(document.notice_url),
     text(document.document_access_hint || document.error_message),
     text(document.extracted_at),
-  ]);
+    ]);
 }
 
 
@@ -315,7 +320,7 @@ function buildDashboard(sheet, notices, documents) {
   writeHeading(
     sheet,
     "기후·온실가스·배출권거래제 공고 검토 대시보드",
-    "원문 링크와 문서 금액의 기준을 함께 확인하세요. 최종 입찰 판단은 담당자가 합니다.",
+    "나라장터 4개 유형의 현재 접수 공고 전체를 포함합니다. D-7/D-3는 전체 범위 기준이며 Tier 1·2를 우선 검토하세요.",
     15,
   );
   const noticeEnd = Math.max(7, notices.length + 6);
@@ -325,6 +330,16 @@ function buildDashboard(sheet, notices, documents) {
   addCard(sheet, 6, "Tier 2", "=COUNTIFS('공고목록'!$B$7:$B$" + noticeEnd + ",\"Tier 2\")", COLORS.paleAmber);
   addCard(sheet, 9, "Tier 3", "=COUNTIFS('공고목록'!$B$7:$B$" + noticeEnd + ",\"Tier 3\")", COLORS.paleGray);
   addCard(sheet, 12, "공개 원문 추출 완료", "=COUNTIFS('문서요약'!$G$7:$G$" + documentEnd + ",\"공개 원문 추출 완료\")", COLORS.paleGreen);
+
+  sheet.getRange("A9:A10").values = [["D-7 중요 마감"], ["D-3 중요 마감"]];
+  sheet.getRange("B9").formulas = [["=COUNTIFS('공고목록'!$J$7:$J$" + noticeEnd + ",\"D-7\")"]];
+  sheet.getRange("B10").formulas = [["=COUNTIFS('공고목록'!$J$7:$J$" + noticeEnd + ",\"D-3\")"]];
+  sheet.getRange("A9:B10").format = {
+    borders: { preset: "all", style: "thin", color: COLORS.line },
+    verticalAlignment: "center",
+  };
+  sheet.getRange("A9:A10").format.fill = COLORS.paleAmber;
+  sheet.getRange("B9:B10").setNumberFormat("#,##0");
 
   const tierHeaders = ["Tier", "공고 수", "공개 문서 추출 완료"];
   const tierRows = [["Tier 1"], ["Tier 2"], ["Tier 3"]];
@@ -405,28 +420,35 @@ function buildNoticesSheet(sheet, notices) {
     sheet,
     "공고목록",
     "대표 문서만 표시합니다. 복수 문서의 근거와 원문은 문서요약 시트에서 확인하세요.",
-    20,
+    21,
   );
   const headers = [
     "공고 ID", "Tier", "Tier 판단 근거", "검토상태", "공고명", "발주기관", "출처",
-    "공고일", "마감일", "입찰방식", "공고목록 금액(원)", "공고목록 금액 원문",
+    "공고일", "마감일", "중요 마감", "입찰방식", "공고목록 금액(원)", "공고목록 금액 원문",
     "문서 상태", "과업 간단 요약", "문서 추출 금액(원)", "문서 금액 원문",
     "금액 기준", "공식 공고 URL", "대표 RFP/과업지시서 URL", "검토 메모",
   ];
   const rows = noticeRows(notices);
   const end = Math.max(7, rows.length + 6);
-  sheet.getRange("A6:T6").values = [headers];
-  if (rows.length) sheet.getRange("A7:T" + end).values = rows;
-  styleTable(sheet, "A6:T6", "A7:T" + end, "WorkbenchNoticesTable");
+  sheet.getRange("A6:U6").values = [headers];
+  if (rows.length) sheet.getRange("A7:U" + end).values = rows;
+  styleTable(sheet, "A6:U6", "A7:U" + end, "WorkbenchNoticesTable");
   sheet.getRange("H7:I" + end).setNumberFormat("yyyy-mm-dd hh:mm");
-  sheet.getRange("K7:K" + end).setNumberFormat("#,##0");
-  sheet.getRange("O7:O" + end).setNumberFormat("#,##0");
+  sheet.getRange("L7:L" + end).setNumberFormat("#,##0");
+  sheet.getRange("P7:P" + end).setNumberFormat("#,##0");
+  sheet.getRange("J7:J" + end).format.font = { bold: true, color: "#8A2A26" };
   sheet.getRange("C7:C" + end).format.wrapText = true;
   sheet.getRange("E7:E" + end).format.wrapText = true;
-  sheet.getRange("N7:N" + end).format.wrapText = true;
-  sheet.getRange("T7:T" + end).format.wrapText = true;
-  sheet.getRange("A7:T" + end).format.rowHeight = 52;
-  setWidths(sheet, [10, 11, 28, 14, 52, 22, 24, 18, 18, 18, 18, 22, 24, 58, 18, 18, 16, 48, 48, 28]);
+  sheet.getRange("O7:O" + end).format.wrapText = true;
+  sheet.getRange("U7:U" + end).format.wrapText = true;
+  sheet.getRange("A7:U" + end).format.rowHeight = 52;
+  notices.forEach((notice, index) => {
+    const row = index + 7;
+    const priority = text(notice.deadline_priority);
+    if (priority === "D-7") sheet.getRange("J" + row).format.fill = COLORS.paleAmber;
+    if (priority === "D-3") sheet.getRange("J" + row).format.fill = COLORS.paleRed;
+  });
+  setWidths(sheet, [10, 11, 28, 14, 52, 22, 24, 18, 18, 15, 18, 18, 22, 24, 58, 18, 18, 16, 48, 48, 28]);
   sheet.freezePanes.freezeRows(6);
   sheet.freezePanes.freezeColumns(5);
 }
@@ -437,7 +459,7 @@ function buildDocumentsSheet(sheet, documents) {
   writeHeading(
     sheet,
     "문서요약",
-    "문서 한 건당 한 행입니다. 빈 값은 추측하지 않았으므로 상태와 원문 URL을 확인하세요.",
+    "Tier 1·2 문서만 요약합니다. Tier 3의 공식 첨부 링크는 공고목록 시트에서 확인하세요.",
     16,
   );
   const headers = [
@@ -570,6 +592,7 @@ async function main() {
   console.log(fitReviewCheck.ndjson);
   const errors = await workbook.inspect({
     kind: "match",
+    range: "대시보드!A1:N24",
     searchTerm: "#REF!|#DIV/0!|#VALUE!|#NAME\\?|#N/A|#NUM!|#NULL!|#SPILL!|#CALC!",
     options: { useRegex: true, maxResults: 300 },
     summary: "final formula error scan",

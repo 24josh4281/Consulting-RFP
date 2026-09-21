@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode, urljoin, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo
 
 from .keyword_matcher import assess_g2b_title, extension_from_url, has_any_term, is_excluded, normalize_text, score_text
 from .models import Attachment, Notice
@@ -283,6 +284,15 @@ def board_metadata(text: str) -> dict[str, str]:
 
 class G2BBidApiFetcher(BaseFetcher):
     def fetch(self, days: int) -> list[Notice]:
+        notices: list[Notice] = []
+        for source in self._source_variants():
+            fetcher = self if source is self.source else G2BBidApiFetcher(
+                source, self.keyword_config, self.global_config, self.root_dir
+            )
+            notices.extend(fetcher._fetch_recent(days))
+        return self._deduplicate_notices(notices)
+
+    def _fetch_recent(self, days: int) -> list[Notice]:
         env_name = self.source.get("service_key_env", "DATA_GO_KR_SERVICE_KEY")
         service_key = os.environ.get(env_name)
         if not service_key:
@@ -317,7 +327,211 @@ class G2BBidApiFetcher(BaseFetcher):
 
         return notices
 
-    def _parse_payload(self, payload: str) -> list[Notice]:
+    def fetch_open_notices(
+        self,
+        *,
+        days: int,
+        search_terms: list[str],
+        max_pages_per_term: int = 3,
+        closed_notice_exclusion: str = "Y",
+        include_all_notices: bool = False,
+        max_pages_per_query: int = 100,
+        max_requests: int = 500,
+    ) -> list[Notice]:
+        """Search all configured G2B procurement types for currently open bids.
+
+        In all-notice mode, the official PPSSrch operations are queried without a title
+        filter and every result page is collected (up to the configured safety caps).
+        A local deadline check is always applied as a second expired-notice guard.
+        """
+        notices: list[Notice] = []
+        request_budget = {"used": 0, "limit": max(1, int(max_requests))}
+        for source in self._source_variants():
+            fetcher = self if source is self.source else G2BBidApiFetcher(
+                source, self.keyword_config, self.global_config, self.root_dir
+            )
+            notices.extend(
+                fetcher._fetch_open_for_source(
+                    days=days,
+                    search_terms=search_terms,
+                    max_pages_per_term=max_pages_per_term,
+                    closed_notice_exclusion=closed_notice_exclusion,
+                    include_all_notices=include_all_notices,
+                    max_pages_per_query=max_pages_per_query,
+                    request_budget=request_budget,
+                )
+            )
+        return self._deduplicate_notices(notices)
+
+    def _fetch_open_for_source(
+        self,
+        *,
+        days: int,
+        search_terms: list[str],
+        max_pages_per_term: int,
+        closed_notice_exclusion: str,
+        include_all_notices: bool,
+        max_pages_per_query: int,
+        request_budget: dict[str, int],
+    ) -> list[Notice]:
+        env_name = self.source.get("service_key_env", "DATA_GO_KR_SERVICE_KEY")
+        service_key = os.environ.get(env_name)
+        if not service_key:
+            print(f"[skip] {self.source['id']}: 환경변수 {env_name}가 없어 보정 조회를 건너뜁니다.")
+            return []
+
+        endpoint = str(self.source.get("endpoint") or "")
+        if "PPSSrch" not in endpoint:
+            raise ValueError(f"현재공고 검색용 PPSSrch endpoint가 아닙니다: {self.source['id']}")
+
+        timeout = int(self.global_config.get("request_timeout_seconds", 20))
+        user_agent = self.global_config.get("user_agent", "ClimateRfpTracker/0.1")
+        page_size = int(self.source.get("default_params", {}).get("numOfRows", 100))
+        now = datetime.now(ZoneInfo("Asia/Seoul"))
+        remaining_days = max(1, days)
+        window_end = now.date()
+        date_windows: list[tuple[str, str]] = []
+        while remaining_days > 0:
+            window_days = min(30, remaining_days)
+            window_start = window_end - timedelta(days=window_days - 1)
+            date_windows.append((window_start.strftime("%Y%m%d"), window_end.strftime("%Y%m%d")))
+            remaining_days -= window_days
+            window_end = window_start - timedelta(days=1)
+        request_delay = float(self.global_config.get("open_reconcile_request_delay_seconds", 0.05))
+        notices: list[Notice] = []
+
+        terms = [""] if include_all_notices else list(
+            dict.fromkeys(str(value).strip() for value in search_terms if str(value).strip())
+        )
+        for term in terms:
+            for start_date, end_date in date_windows:
+                begin = start_date + "0000"
+                end = end_date + "2359"
+                page_limit = max(1, max_pages_per_query if include_all_notices else max_pages_per_term)
+                for page_no in range(1, page_limit + 1):
+                    if request_budget["used"] >= request_budget["limit"]:
+                        raise RuntimeError(
+                            "나라장터 전체공고 조회의 요청 안전한도에 도달했습니다. "
+                            "운영 계정의 호출 허용량과 조회기간을 확인하세요."
+                        )
+                    params = dict(self.source.get("default_params", {}))
+                    params.update(
+                        {
+                            "inqryBgnDt": begin,
+                            "inqryEndDt": end,
+                            "pageNo": str(page_no),
+                            "bidClseExcpYn": closed_notice_exclusion,
+                            self.source.get("service_key_param", "serviceKey"): service_key,
+                        }
+                    )
+                    if term:
+                        params["bidNtceNm"] = term
+                    url = endpoint + "?" + urlencode(params)
+                    request_budget["used"] += 1
+                    payload = fetch_text(url, timeout=timeout, user_agent=user_agent)
+                    try:
+                        data = json.loads(payload)
+                    except json.JSONDecodeError as exc:
+                        raise RuntimeError(f"{self.source['id']} API가 JSON이 아닌 응답을 반환했습니다.") from exc
+                    error_response = data.get("nkoneps.com.response.ResponseError", {})
+                    service_response = data.get("OpenAPI_ServiceResponse", {}).get("cmmMsgHeader", {})
+                    if service_response:
+                        result_code = str(service_response.get("returnReasonCode") or "API 오류")
+                        result_message = str(service_response.get("errMsg") or "API 응답 오류")
+                        raise RuntimeError(f"{self.source['id']} API 오류 {result_code}: {result_message}")
+                    if error_response:
+                        header = error_response.get("header", {})
+                    else:
+                        response = data.get("response", {})
+                        header = response.get("header", {}) if isinstance(response, dict) else {}
+                    result_code = str(header.get("resultCode") or "")
+                    if result_code and result_code != "00":
+                        result_message = str(header.get("resultMsg") or "API 응답 오류")
+                        raise RuntimeError(f"{self.source['id']} API 오류 {result_code}: {result_message}")
+                    page_items = self._payload_items(payload)
+                    page_notices = self._parse_payload(payload, include_all_notices=include_all_notices)
+                    notices.extend(item for item in page_notices if self._is_currently_open(item, now))
+
+                    try:
+                        total_count = int(data.get("response", {}).get("body", {}).get("totalCount", 0))
+                    except (AttributeError, TypeError, ValueError):
+                        total_count = 0
+                    if include_all_notices and page_no == 1 and total_count:
+                        required_pages = (total_count + page_size - 1) // page_size
+                        if required_pages > page_limit:
+                            raise RuntimeError(
+                                f"{self.source['id']} {start_date}-{end_date} 조회에 {required_pages}페이지가 필요하지만 "
+                                f"안전한도는 {page_limit}페이지입니다. 조회를 축소하지 않고 중단했습니다."
+                            )
+                    if request_delay > 0:
+                        time.sleep(request_delay)
+                    if not page_items or (total_count and page_no * page_size >= total_count):
+                        break
+
+        return notices
+
+    def _source_variants(self) -> list[dict[str, Any]]:
+        variants = [self.source]
+        for endpoint in self.source.get("additional_endpoints", []):
+            variant = dict(self.source)
+            variant.pop("additional_endpoints", None)
+            variant.update(endpoint)
+            variants.append(variant)
+        return variants
+
+    @staticmethod
+    def _payload_items(payload: str) -> list[dict[str, Any]]:
+        try:
+            data = json.loads(payload)
+        except json.JSONDecodeError:
+            return []
+        body = data.get("response", {}).get("body", {})
+        items = body.get("items", [])
+        if isinstance(items, dict) and "item" in items:
+            items = items.get("item", [])
+        if isinstance(items, dict):
+            items = [items]
+        return [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []
+
+    @staticmethod
+    def _parse_bid_datetime(value: object, now: datetime) -> datetime | None:
+        value_text = str(value or "").strip()
+        if not value_text:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value_text.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=now.tzinfo)
+            else:
+                parsed = parsed.astimezone(now.tzinfo)
+            return parsed
+        except ValueError:
+            digits = "".join(character for character in value_text if character.isdigit())
+            for pattern, length in (("%Y%m%d%H%M%S", 14), ("%Y%m%d%H%M", 12), ("%Y%m%d", 8)):
+                if len(digits) >= length:
+                    try:
+                        return datetime.strptime(digits[:length], pattern).replace(tzinfo=now.tzinfo)
+                    except ValueError:
+                        continue
+            return None
+
+    @classmethod
+    def _is_currently_open(cls, notice: Notice, now: datetime) -> bool:
+        # A future notice is published but is not yet accepting bids.
+        begin_at = cls._parse_bid_datetime((notice.raw or {}).get("bidBeginDt"), now)
+        if begin_at is not None and begin_at > now:
+            return False
+        deadline = cls._parse_bid_datetime(notice.deadline_at, now)
+        return deadline is None or deadline >= now
+
+    @staticmethod
+    def _deduplicate_notices(notices: list[Notice]) -> list[Notice]:
+        unique: dict[tuple[str, str], Notice] = {}
+        for notice in notices:
+            unique[(notice.source_id, notice.external_id)] = notice
+        return list(unique.values())
+
+    def _parse_payload(self, payload: str, *, include_all_notices: bool = False) -> list[Notice]:
         try:
             data = json.loads(payload)
         except json.JSONDecodeError:
@@ -343,10 +557,10 @@ class G2BBidApiFetcher(BaseFetcher):
             title = str(item.get("bidNtceNm") or item.get("bidNm") or item.get("ntceNm") or "").strip()
             if not title:
                 continue
-            if is_excluded(title, self.keyword_config):
+            if not include_all_notices and is_excluded(title, self.keyword_config):
                 continue
             assessment = assess_g2b_title(title, self.keyword_config)
-            if assessment.tier == "ignore":
+            if not include_all_notices and assessment.tier == "ignore":
                 continue
             match = assessment.match
 
@@ -364,7 +578,7 @@ class G2BBidApiFetcher(BaseFetcher):
             )
             raw = dict(item)
             raw["_tracker_intake"] = {
-                "rule": "g2b_title_policy_v1",
+                "rule": "g2b_all_current_v1" if include_all_notices else "g2b_title_policy_v1",
                 "tier": assessment.tier,
                 "title_matched_keywords": match.keywords,
                 "strong_keywords": assessment.strong_keywords,

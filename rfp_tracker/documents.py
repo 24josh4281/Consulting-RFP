@@ -15,6 +15,7 @@ from urllib.parse import unquote, urlparse
 from xml.etree import ElementTree
 
 from .fetchers import extract_g2b_spec_attachments
+from .briefing import deadline_priority_label, parse_notice_datetime, seoul_now
 from .keyword_matcher import extension_from_url, normalize_text
 from .storage import list_workbench_notices, upsert_attachments_for_notice, upsert_document_insight
 
@@ -177,7 +178,7 @@ def _document_access_hint(source_id: str, document_url: str) -> str:
     """Explain whether a missing link means a true absence or a source limitation."""
     if document_url:
         return "수집된 공개 문서 링크"
-    if source_id == "g2b_service_bids":
+    if source_id.startswith("g2b_"):
         return "저장된 나라장터 응답에서 명시적 첨부 URL을 찾지 못했습니다. 공식 원문 페이지의 파일첨부에서 RFP/과업지시서를 확인하세요."
     return "문서 링크가 아직 수집되지 않았습니다. 원문 또는 공개 상세 페이지를 확인하세요."
 
@@ -242,6 +243,7 @@ def list_document_rows(
     ).fetchall()
 
     documents: list[dict[str, object]] = []
+    current_date = seoul_now().date()
     for row in rows:
         document_url = row["document_url"] or ""
         file_type = _resolved_file_type(document_url, row["file_type"])
@@ -273,6 +275,11 @@ def list_document_rows(
                 "buyer": row["buyer"] or "",
                 "published_at": row["published_at"] or "",
                 "deadline_at": row["deadline_at"] or "",
+                "deadline_priority": deadline_priority_label(
+                    (deadline.date() - current_date).days
+                    if (deadline := parse_notice_datetime(row["deadline_at"]))
+                    else None
+                ),
                 "procurement_method": row["procurement_method"] or "",
                 "budget": row["budget"] or "",
                 "relevance_score": row["relevance_score"],
@@ -312,7 +319,7 @@ def backfill_g2b_attachments(connection: sqlite3.Connection) -> dict[str, int]:
         "deduplicated": 0,
     }
     rows = connection.execute(
-        "SELECT id, raw_json FROM notices WHERE source_id = 'g2b_service_bids' ORDER BY id"
+        "SELECT id, raw_json FROM notices WHERE substr(source_id, 1, 4) = 'g2b_' ORDER BY id"
     ).fetchall()
     for row in rows:
         summary["processed_notices"] += 1
@@ -564,7 +571,11 @@ def extract_document_insights(
     file_type: str | None = None,
 ) -> list[dict[str, object]]:
     """Process collected document rows without mutating the original notice/attachment data."""
-    rows = list_document_rows(connection, include_missing=True)
+    # The database can now contain every open nationwide G2B notice. Keep automatic
+    # downloads and RFP summarization focused on Innergen's actionable Tier 1/2 items;
+    # original attachment links for Tier 3 remain available in the dashboard/workbook.
+    rows = list_document_rows(connection, business_tier="tier_1", include_missing=True)
+    rows.extend(list_document_rows(connection, business_tier="tier_2", include_missing=True))
     if file_type:
         normalized_file_type = file_type.lower().lstrip(".")
         rows = [
@@ -729,6 +740,7 @@ def _listing_budget_to_krw(value: object) -> int | None:
 def build_workbench_payload(connection: sqlite3.Connection) -> dict[str, object]:
     """Build a non-secret, source-preserving dataset for HTML and Excel outputs."""
     notices: list[dict[str, object]] = []
+    current_date = seoul_now().date()
     for row in list_workbench_notices(connection):
         attachments = [
             dict(item) for item in _safe_json_list(row["attachments_json"]) if isinstance(item, dict)
@@ -764,6 +776,8 @@ def build_workbench_payload(connection: sqlite3.Connection) -> dict[str, object]
         notice_url = str(row["url"] or "")
         business_tier = str(row["business_tier"] or "unclassified")
         review_status = str(row["review_status"] or "new")
+        deadline = parse_notice_datetime(row["deadline_at"])
+        days_remaining = (deadline.date() - current_date).days if deadline else None
         priority_status, priority_rank, priority_reason = _priority_metadata(
             source_id=source_id,
             notice_url=notice_url,
@@ -781,6 +795,8 @@ def build_workbench_payload(connection: sqlite3.Connection) -> dict[str, object]
                 "url": notice_url,
                 "published_at": str(row["published_at"] or ""),
                 "deadline_at": str(row["deadline_at"] or ""),
+                "days_remaining": days_remaining,
+                "deadline_priority": deadline_priority_label(days_remaining),
                 "buyer": str(row["buyer"] or ""),
                 "budget": str(row["budget"] or ""),
                 "budget_value_krw": _listing_budget_to_krw(row["budget"]),
@@ -866,6 +882,8 @@ def build_workbench_payload(connection: sqlite3.Connection) -> dict[str, object]
         "official_tier_1_priorities": sum(
             1 for item in notices if item["priority_status"] == "official_tier_1"
         ),
+        "deadline_d7": sum(1 for item in notices if item["deadline_priority"] == "D-7"),
+        "deadline_d3": sum(1 for item in notices if item["deadline_priority"] == "D-3"),
     }
     return {"summary": summary, "notices": notices, "documents": documents}
 
@@ -918,6 +936,7 @@ def build_public_workbench_payload(connection: sqlite3.Connection) -> dict[str, 
                 "url": notice_url,
                 "published_at": str(notice.get("published_at") or ""),
                 "deadline_at": str(notice.get("deadline_at") or ""),
+                "deadline_priority": str(notice.get("deadline_priority") or ""),
                 "buyer": str(notice.get("buyer") or ""),
                 "budget": str(notice.get("budget") or ""),
                 "budget_value_krw": notice.get("budget_value_krw"),
@@ -961,6 +980,8 @@ def build_public_workbench_payload(connection: sqlite3.Connection) -> dict[str, 
         "extracted_documents": sum(
             1 for item in public_documents if item["extraction_status"] == "extracted"
         ),
+        "deadline_d7": sum(1 for item in public_notices if item["deadline_priority"] == "D-7"),
+        "deadline_d3": sum(1 for item in public_notices if item["deadline_priority"] == "D-3"),
     }
     return {"visibility": "public", "summary": summary, "notices": public_notices, "documents": public_documents}
 
@@ -992,6 +1013,7 @@ def write_documents_csv(rows: list[dict[str, object]], out_path: str | Path) -> 
         "buyer",
         "published_at",
         "deadline_at",
+        "deadline_priority",
         "procurement_method",
         "budget",
         "relevance_score",
@@ -1031,7 +1053,7 @@ def render_documents_report(rows: list[dict[str, object]], out_path: str | Path)
                 f'<a href="{html.escape(document_url)}" target="_blank" rel="noopener">'
                 f'{html.escape(str(row["document_label"] or document_url))}</a>'
             )
-        elif str(row["source_id"] or "") == "g2b_service_bids" and notice_url != "#":
+        elif str(row["source_id"] or "").startswith("g2b_") and notice_url != "#":
             document_link = (
                 f'<a href="{html.escape(notice_url)}" target="_blank" rel="noopener">'
                 "나라장터 원문에서 파일첨부 확인</a>"

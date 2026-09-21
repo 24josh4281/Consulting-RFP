@@ -2,7 +2,18 @@
   "global": {
     "request_timeout_seconds": 20,
     "user_agent": "ClimateRfpTracker/0.1 (+local ESG consulting workflow)",
-    "max_pages": 2
+    "max_pages": 2,
+    "g2b_open_reconcile_days": 90,
+    "g2b_open_collect_all_current": true,
+    "g2b_open_reconcile_max_pages_per_term": 2,
+    "g2b_open_unfiltered_max_pages_per_query": 100,
+    "g2b_open_reconcile_max_requests": 500,
+    "g2b_open_reconcile_closed_notice_exclusion": "Y",
+    "g2b_open_reconcile_request_delay_seconds": 0.05,
+    "g2b_open_search_terms": [
+      "기후", "기후변화", "온실가스", "배출권", "배출권거래제", "외부사업",
+      "탄소", "탄소중립", "저탄소", "배출량", "배출계수", "scope", "스코프", "환경", "에너지"
+    ]
   },
   "sources": [
     {
@@ -15,10 +26,10 @@
     },
     {
       "id": "g2b_service_bids",
-      "name": "나라장터 용역 - 환경·기후·온실가스·ETS",
+      "name": "나라장터 용역 - 기후·온실가스·환경",
       "type": "g2b_bid_api",
       "enabled": false,
-      "endpoint": "https://apis.data.go.kr/1230000/ad/BidPublicInfoService/getBidPblancListInfoServc",
+      "endpoint": "https://apis.data.go.kr/1230000/ad/BidPublicInfoService/getBidPblancListInfoServcPPSSrch",
       "portal_url": "https://www.g2b.go.kr/",
       "authority": "official",
       "priority": "P0",
@@ -30,7 +41,27 @@
         "type": "json",
         "numOfRows": "100"
       },
-      "notes": "나라장터 용역 공고를 공식 API로 읽은 뒤 환경·기후·온실가스·배출권·ETS·LCA·탄소발자국·환경영향평가 키워드로 로컬 필터링합니다. 공공데이터포털 서비스키 필요. 1회 최대 5페이지(500건)만 읽어 개발계정 호출량을 보호합니다."
+      "additional_endpoints": [
+        {
+          "id": "g2b_goods_bids",
+          "name": "나라장터 물품 입찰",
+          "endpoint": "https://apis.data.go.kr/1230000/ad/BidPublicInfoService/getBidPblancListInfoThngPPSSrch",
+          "max_pages": 1
+        },
+        {
+          "id": "g2b_construction_bids",
+          "name": "나라장터 공사 입찰",
+          "endpoint": "https://apis.data.go.kr/1230000/ad/BidPublicInfoService/getBidPblancListInfoCnstwkPPSSrch",
+          "max_pages": 1
+        },
+        {
+          "id": "g2b_foreign_bids",
+          "name": "나라장터 외자 입찰",
+          "endpoint": "https://apis.data.go.kr/1230000/ad/BidPublicInfoService/getBidPblancListInfoFrgcptPPSSrch",
+          "max_pages": 1
+        }
+      ],
+      "notes": "용역·물품·공사·외자 공식 검색 API에서 현재 입찰 접수 중인 전체 공고를 조회합니다. 90일 범위를 최대 30일 단위로 나누고, 페이지 누락 방지를 위해 totalCount까지 조회하되 전체 보정 조회는 최대 500회로 안전 제한합니다. API의 마감 제외 조건과 로컬 마감시각 검증을 함께 적용합니다. 공공데이터포털 서비스키 필요."
     },
     {
       "id": "gir_bid_notices",

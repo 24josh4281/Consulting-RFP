@@ -42,6 +42,11 @@ def parse_notice_datetime(value: object) -> datetime | None:
     return None
 
 
+def deadline_priority_label(days_remaining: int | None) -> str:
+    """Highlight notices exactly seven or three calendar days before deadline."""
+    return f"D-{days_remaining}" if days_remaining in {7, 3} else ""
+
+
 def _json_list(value: object) -> list[dict[str, Any]]:
     if isinstance(value, list):
         return [item for item in value if isinstance(item, dict)]
@@ -75,6 +80,7 @@ def notice_view(row: Any, now: datetime | None = None) -> dict[str, Any]:
         "deadline_at": str(row["deadline_at"] or ""),
         "deadline": deadline,
         "days_remaining": days_remaining,
+        "deadline_priority": deadline_priority_label(days_remaining),
         "relevance_score": int(row["relevance_score"]),
         "review_status": str(row["review_status"]),
         "business_tier": str(row["business_tier"] if "business_tier" in row.keys() else "unclassified"),
@@ -145,6 +151,7 @@ def build_briefing(
         for item in eligible
         if item["days_remaining"] is not None and 0 <= item["days_remaining"] <= due_days
     ]
+    deadline_priority = [item for item in eligible if item["deadline_priority"]]
     missing_documents = [item for item in eligible if item["document_count"] == 0]
     watched = [item for item in eligible if item["review_status"] in {"watch", "interesting"}]
     high_score_missing = [item for item in missing_documents if item["relevance_score"] >= min_score + 2]
@@ -177,6 +184,7 @@ def build_briefing(
         "action_queue": action_queue,
         "new_today": today_new[:limit],
         "urgent": urgent[:limit],
+        "deadline_priority": deadline_priority,
         "missing_documents": missing_documents[:limit],
         "similar_pairs": find_similar_pairs(eligible[: max(limit * 2, 20)]),
     }

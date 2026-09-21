@@ -260,6 +260,7 @@ def _priority_card(notice: dict[str, object]) -> str:
     primary = dict(notice.get("primary_insight") or {})
     document_status = str(notice.get("document_status") or "not_attempted")
     deadline = str(notice.get("deadline_at") or "마감일 미수집")
+    deadline_priority = str(notice.get("deadline_priority") or "")
     summary = str(primary.get("task_summary") or "공식 첨부 원문을 열어 과업범위와 자격요건을 확인하세요.")
     return f"""
       <article class="priority-card">
@@ -268,11 +269,23 @@ def _priority_card(notice: dict[str, object]) -> str:
           <span class="document-status status-{html.escape(document_status, quote=True)}">{html.escape(extraction_status_label(document_status))}</span>
         </div>
         <h3>{_external_link(notice.get("url"), notice.get("title"))}</h3>
-        <p class="meta">{html.escape(str(notice.get("source_name") or ""))} · {html.escape(str(notice.get("buyer") or "발주기관 미수집"))} · 마감 {html.escape(deadline)}</p>
+        <p class="meta">{html.escape(str(notice.get("source_name") or ""))} · {html.escape(str(notice.get("buyer") or "발주기관 미수집"))} · 마감 {html.escape(deadline)} {_deadline_priority_badge(deadline_priority)}</p>
         <p>{html.escape(summary)}</p>
         <p class="priority-reason">{html.escape(str(notice.get("priority_reason") or ""))}</p>
       </article>
     """
+
+
+def _deadline_priority_badge(priority: str) -> str:
+    if priority not in {"D-7", "D-3"}:
+        return ""
+    border = "#E2AAA5" if priority == "D-3" else "#E7C66C"
+    background = "#FBE7E5" if priority == "D-3" else "#FFF3D6"
+    color = "#8A2A26" if priority == "D-3" else "#7B5510"
+    return (
+        f'<span class="deadline-priority {priority.lower()}" style="border-color:{border};'
+        f'background:{background};color:{color};">{priority} 중요</span>'
+    )
 
 
 def render_workbench_dashboard(
@@ -305,6 +318,8 @@ def render_workbench_dashboard(
         ("Tier 1", summary.get("tier_1", 0), "green"),
         ("Tier 2", summary.get("tier_2", 0), "amber"),
         ("Tier 3", summary.get("tier_3", 0), "gray"),
+        ("D-7 중요 마감", summary.get("deadline_d7", 0), "amber"),
+        ("D-3 중요 마감", summary.get("deadline_d3", 0), "red"),
         ("공개 원문 추출 완료", summary.get("extracted_documents", 0), "blue"),
         ("첨부 URL 확인 필요", summary.get("missing_document_urls", 0), "red"),
     ]
@@ -337,6 +352,7 @@ def render_workbench_dashboard(
         document_status = str(notice.get("document_status") or "not_attempted")
         priority_status = str(notice.get("priority_status") or "not_priority")
         deadline = str(notice.get("deadline_at") or "")
+        deadline_priority = str(notice.get("deadline_priority") or "")
         keywords = notice.get("matched_keywords") or []
         keywords_text = ", ".join(str(item) for item in keywords)
         primary = dict(notice.get("primary_insight") or {})
@@ -374,6 +390,7 @@ def render_workbench_dashboard(
                 data-source="{html.escape(source_name, quote=True)}"
                 data-document="{html.escape(document_status, quote=True)}"
                 data-priority="{html.escape(priority_status, quote=True)}"
+                data-deadline-priority="{html.escape(deadline_priority, quote=True)}"
                 data-deadline="{html.escape(deadline[:10], quote=True)}"
                 data-search="{html.escape(search_text, quote=True)}">
               <td><span class="tier-badge tier-{html.escape(tier, quote=True)}">{html.escape(tier_label_text)}</span></td>
@@ -383,7 +400,7 @@ def render_workbench_dashboard(
                 <div class="meta">{html.escape(source_name)} · 점수 {html.escape(str(notice.get("relevance_score") or 0))}</div>
               </td>
               <td>{html.escape(str(notice.get("buyer") or ""))}</td>
-              <td>{html.escape(deadline or "마감일 미수집")}</td>
+              <td>{_deadline_priority_badge(deadline_priority)}<div>{html.escape(deadline or "마감일 미수집")}</div></td>
               <td>
                 <div>{listing_amount}</div>
                 <div class="muted">{listing_amount_note}</div>
@@ -458,13 +475,15 @@ def render_workbench_dashboard(
     .eyebrow {{ margin: 0 0 5px; font-size: 12px; font-weight: 700; letter-spacing: .08em; color: #BED7EF; }}
     h1 {{ margin: 0; font-size: 26px; }}
     .masthead p {{ margin: 8px 0 0; max-width: 1050px; color: #E2EDF7; line-height: 1.55; }}
-    .kpis {{ display: grid; grid-template-columns: repeat(6, minmax(155px, 1fr)); gap: 12px; margin: 18px 0; }}
+    .kpis {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); gap: 12px; margin: 18px 0; }}
     .kpi-card {{ background: white; border: 1px solid var(--line); border-top: 5px solid var(--navy); padding: 14px; min-height: 95px; }}
     .kpi-card span {{ display: block; color: var(--muted); font-size: 13px; }}
     .kpi-card strong {{ display: block; margin-top: 10px; font-size: 29px; color: var(--navy); }}
     .kpi-card.green {{ border-top-color: #2B7A4B; }} .kpi-card.amber {{ border-top-color: #B7791F; }}
     .kpi-card.gray {{ border-top-color: #718096; }} .kpi-card.blue {{ border-top-color: #2B6CB0; }}
     .kpi-card.red {{ border-top-color: #C53030; }}
+    .deadline-priority {{ display:inline-block; padding:3px 7px; border:1px solid #E7C66C; background:#FFF3D6; color:#7B5510; font-size:11px; font-weight:800; white-space:nowrap; }}
+    .deadline-priority.d-3 {{ border-color:#E2AAA5; background:#FBE7E5; color:#8A2A26; }}
     .panel {{ background: white; border: 1px solid var(--line); padding: 18px; margin-top: 16px; }}
     .priority-panel {{ border-top: 5px solid #2B7A4B; }}
     .priority-heading {{ display: flex; justify-content: space-between; gap: 16px; align-items: center; margin-bottom: 12px; }}
@@ -476,7 +495,7 @@ def render_workbench_dashboard(
     .priority-card p {{ margin: 8px 0; line-height: 1.5; }}
     .priority-topline {{ display: flex; flex-wrap: wrap; gap: 7px; }}
     .priority-reason {{ color: #205D36; font-size: 12px; font-weight: 700; }}
-    .filter-grid {{ display: grid; grid-template-columns: minmax(260px, 2fr) repeat(6, minmax(130px, 1fr)) auto; gap: 10px; align-items: end; }}
+    .filter-grid {{ display: grid; grid-template-columns: minmax(240px, 2fr) repeat(7, minmax(120px, 1fr)) auto; gap: 10px; align-items: end; }}
     label {{ display: block; color: #405368; font-size: 12px; font-weight: 700; margin-bottom: 5px; }}
     input, select, button {{ width: 100%; min-height: 39px; border: 1px solid #BFCBD7; border-radius: 3px; padding: 8px 10px; background: white; color: var(--ink); }}
     button {{ width: auto; cursor: pointer; background: var(--navy); color: white; border-color: var(--navy); font-weight: 700; }}
@@ -519,8 +538,8 @@ def render_workbench_dashboard(
   <main class="shell">
     <header class="masthead">
       <p class="eyebrow">INNERGEN CLIMATE INTELLIGENCE</p>
-      <h1>기후·온실가스·배출권거래제 공고 작업대</h1>
-      <p>Tier 적합성, 공식 공고, RFP·과업지시서, 자동 추출 근거를 한 곳에서 확인합니다. 자동 요약은 공개 원문에서만 만들며, 최종 입찰 판단은 담당자가 원문으로 확인해야 합니다.</p>
+      <h1>나라장터 전체 현재입찰 · 기후·온실가스 공고 작업대</h1>
+      <p>나라장터 용역·물품·공사·외자 전체의 현재 접수 공고를 포함합니다. Tier 1·2를 우선 검토하고 Tier 3는 분류 참고용으로 확인하세요. D-7/D-3 수치는 모든 수집 공고 기준입니다. 자동 요약은 공개 원문에서만 만들며, 최종 입찰 판단은 담당자가 원문으로 확인해야 합니다.</p>
     </header>
     <section class="kpis">{card_html}</section>
     <section class="panel priority-panel">
@@ -538,6 +557,7 @@ def render_workbench_dashboard(
         <div><label for="search">통합 검색</label><input id="search" placeholder="공고명, 기관, 키워드, 과업 요약"></div>
         <div><label for="tier">Tier</label><select id="tier"><option value="">전체</option><option value="tier_1">Tier 1</option><option value="tier_2">Tier 2</option><option value="tier_3">Tier 3</option></select></div>
         <div><label for="priority">우선 검토</label><select id="priority"><option value="">전체</option><option value="official_tier_1">Tier 1 공식 우선</option></select></div>
+        <div><label for="deadline-priority">중요 마감</label><select id="deadline-priority"><option value="">전체</option><option value="D-7">D-7</option><option value="D-3">D-3</option></select></div>
         <div><label for="review">검토 상태</label><select id="review"><option value="">전체</option>{review_select}</select></div>
         <div><label for="source">출처</label><select id="source"><option value="">전체</option>{source_select}</select></div>
         <div><label for="document">문서 상태</label><select id="document"><option value="">전체</option>{document_select}</select></div>
@@ -556,12 +576,13 @@ def render_workbench_dashboard(
   </main>
   <script>
     const rows = Array.from(document.querySelectorAll(".notice-row"));
-    const controls = ["search", "tier", "priority", "review", "source", "document", "deadline"].map(id => document.getElementById(id));
+    const controls = ["search", "tier", "priority", "deadline-priority", "review", "source", "document", "deadline"].map(id => document.getElementById(id));
     const visibleCount = document.getElementById("visible-count");
     function applyFilters() {{
       const query = document.getElementById("search").value.trim().toLocaleLowerCase();
       const tier = document.getElementById("tier").value;
       const priority = document.getElementById("priority").value;
+      const deadlinePriority = document.getElementById("deadline-priority").value;
       const review = document.getElementById("review").value;
       const source = document.getElementById("source").value;
       const documentStatus = document.getElementById("document").value;
@@ -571,11 +592,12 @@ def render_workbench_dashboard(
         const matchesQuery = !query || row.dataset.search.includes(query);
         const matchesTier = !tier || row.dataset.tier === tier;
         const matchesPriority = !priority || row.dataset.priority === priority;
+        const matchesDeadlinePriority = !deadlinePriority || row.dataset.deadlinePriority === deadlinePriority;
         const matchesReview = !review || row.dataset.review === review;
         const matchesSource = !source || row.dataset.source === source;
         const matchesDocument = !documentStatus || row.dataset.document === documentStatus;
         const matchesDeadline = !deadline || (row.dataset.deadline && row.dataset.deadline <= deadline);
-        const visible = matchesQuery && matchesTier && matchesPriority && matchesReview && matchesSource && matchesDocument && matchesDeadline;
+        const visible = matchesQuery && matchesTier && matchesPriority && matchesDeadlinePriority && matchesReview && matchesSource && matchesDocument && matchesDeadline;
         row.style.display = visible ? "" : "none";
         if (visible) count += 1;
       }});
@@ -612,6 +634,8 @@ def _render_public_workbench_dashboard(payload: dict[str, object], path: Path) -
         ("공개 공식 공고", summary.get("total_notices", len(notices)), "navy"),
         ("공개 문서 링크", summary.get("public_document_links", 0), "blue"),
         ("공개 원문 추출 완료", summary.get("extracted_documents", 0), "green"),
+        ("D-7 중요 마감", summary.get("deadline_d7", 0), "amber"),
+        ("D-3 중요 마감", summary.get("deadline_d3", 0), "red"),
     ]
     card_html = "".join(
         f'<section class="kpi {tone}"><span>{html.escape(label)}</span><strong>{html.escape(str(value))}</strong></section>'
@@ -622,6 +646,7 @@ def _render_public_workbench_dashboard(payload: dict[str, object], path: Path) -
         source_name = str(notice.get("source_name") or "")
         status = str(notice.get("document_status") or "not_attempted")
         deadline = str(notice.get("deadline_at") or "")
+        deadline_priority = str(notice.get("deadline_priority") or "")
         primary = dict(notice.get("primary_insight") or {})
         summary_text = str(primary.get("task_summary") or "문서 원문을 열어 과업범위를 확인하세요.")
         amount_text = str(primary.get("amount_text") or "")
@@ -636,10 +661,10 @@ def _render_public_workbench_dashboard(payload: dict[str, object], path: Path) -
         )
         rows.append(
             f"""
-            <tr class="notice-row" data-source="{html.escape(source_name, quote=True)}" data-document="{html.escape(status, quote=True)}" data-deadline="{html.escape(deadline[:10], quote=True)}" data-search="{html.escape(search_text, quote=True)}">
+            <tr class="notice-row" data-source="{html.escape(source_name, quote=True)}" data-document="{html.escape(status, quote=True)}" data-deadline-priority="{html.escape(deadline_priority, quote=True)}" data-deadline="{html.escape(deadline[:10], quote=True)}" data-search="{html.escape(search_text, quote=True)}">
               <td class="title">{_external_link(notice.get("url"), notice.get("title"))}<div class="meta">{html.escape(source_name)} · {html.escape(str(notice.get("published_at") or "공고일 미수집"))}</div></td>
               <td>{html.escape(str(notice.get("buyer") or ""))}</td>
-              <td>{html.escape(deadline or "마감일 미수집")}</td>
+              <td>{_deadline_priority_badge(deadline_priority)}<div>{html.escape(deadline or "마감일 미수집")}</div></td>
               <td>{_format_krw(notice.get("budget_value_krw"))}<div class="meta">{html.escape(str(notice.get("procurement_method") or ""))}</div></td>
               <td><span class="status status-{html.escape(status, quote=True)}">{html.escape(extraction_status_label(status))}</span><p>{html.escape(summary_text)}</p>{amount_html}</td>
               <td><details><summary>공개 원문·요약</summary><div class="docs">{_workbench_document_details(notice)}</div></details></td>
@@ -663,7 +688,27 @@ header {{ background:var(--navy); color:#fff; padding:24px 28px; border:1px soli
 .kpis {{ display:grid; grid-template-columns:repeat(3,minmax(180px,1fr)); gap:12px; margin:18px 0; }} .kpi {{ background:#fff; border:1px solid var(--line); border-top:5px solid var(--navy); padding:15px; }} .kpi.blue {{ border-top-color:#2B6CB0; }} .kpi.green {{ border-top-color:#2B7A4B; }} .kpi span {{ color:var(--muted); font-size:13px; }} .kpi strong {{ display:block; margin-top:10px; color:var(--navy); font-size:29px; }}
 .panel {{ background:#fff; border:1px solid var(--line); padding:18px; }} .filters {{ display:grid; grid-template-columns:minmax(280px,2fr) repeat(3,minmax(150px,1fr)) auto; gap:10px; align-items:end; }} label {{ display:block; margin-bottom:5px; color:#405368; font-weight:700; font-size:12px; }} input,select,button {{ width:100%; min-height:39px; padding:8px 10px; border:1px solid #BFCBD7; border-radius:3px; background:#fff; }} button {{ width:auto; cursor:pointer; background:var(--navy); color:#fff; border-color:var(--navy); font-weight:700; }}
 .note {{ margin:14px 0; padding:12px; border:1px solid #E6CE84; background:#FFF9E8; color:#624B13; line-height:1.55; }} .count {{ color:var(--muted); font-size:13px; }} .table-wrap {{ overflow:auto; border:1px solid var(--line); }} table {{ width:100%; min-width:1200px; border-collapse:collapse; font-size:13px; }} th,td {{ border:1px solid var(--line); padding:11px 10px; vertical-align:top; line-height:1.5; }} th {{ background:var(--teal); color:#fff; text-align:left; }} tr:nth-child(even) td {{ background:#FBFCFE; }} a {{ color:#155A8A; font-weight:700; text-decoration:none; }} a:hover {{ text-decoration:underline; }} .title {{ min-width:290px; }} .meta,.amount span {{ color:var(--muted); font-size:12px; }} .status {{ display:inline-block; padding:4px 7px; border:1px solid #E7C66C; background:var(--amber); color:#7B5510; border-radius:3px; font-weight:700; font-size:12px; }} .status-extracted {{ background:var(--green); border-color:#9FCBAE; color:#205D36; }} .status-missing_document_url,.status-download_failed,.status-parse_failed {{ background:var(--red); border-color:#E2AAA5; color:#8A2A26; }} details summary {{ color:#155A8A; cursor:pointer; font-weight:700; }} .docs {{ margin-top:10px; }} .document-card {{ border:1px solid #D5DEE8; padding:10px; margin-top:8px; }} .document-card p {{ margin:6px 0; }} .document-header {{ display:flex; gap:8px; flex-wrap:wrap; }} .warning {{ color:#8A2A26; }} .muted {{ color:var(--muted); }} @media(max-width:900px) {{ .shell {{ padding:14px; }} .kpis,.filters {{ grid-template-columns:1fr; }} }}
-</style></head><body><main class="shell"><header><p class="eyebrow">PUBLIC CLIMATE PROCUREMENT SNAPSHOT</p><h1>기후·온실가스·배출권 관련 공고</h1><p>공개적으로 수집된 공식 공고와 직접 공개된 첨부 원문 링크를 제공합니다. 이 페이지는 정적 스냅샷이며, 최종 입찰 판단과 자격 검토는 공식 원문을 기준으로 담당자가 수행해야 합니다.</p></header><section class="kpis">{card_html}</section><section class="panel"><div class="filters"><div><label for="search">통합 검색</label><input id="search" placeholder="공고명, 기관, 과업 요약"></div><div><label for="source">출처</label><select id="source"><option value="">전체</option>{source_select}</select></div><div><label for="document">문서 상태</label><select id="document"><option value="">전체</option>{document_select}</select></div><div><label for="deadline">마감일 이전</label><input id="deadline" type="date"></div><button id="reset" type="button">필터 초기화</button></div><p class="count"><strong id="visible-count">{len(notices)}</strong>건 표시 중</p><p class="note">금액은 공고 목록 또는 공개 문서에 표시된 기준 금액입니다. 예산액·소요예산·추정가격·입찰금액·계약금액은 서로 다른 개념이므로, 금액 기준과 VAT 포함 여부를 원문에서 확인하세요.</p><div class="table-wrap"><table><thead><tr><th>공고명 / 출처</th><th>발주기관</th><th>마감</th><th>공고목록 금액 / 방식</th><th>문서·요약</th><th>원문</th></tr></thead><tbody id="notice-rows">{''.join(rows)}</tbody></table></div></section></main><script>
+</style></head><body><main class="shell"><header><p class="eyebrow">PUBLIC PROCUREMENT SNAPSHOT</p><h1>나라장터 현재 접수 공고 · 기후·온실가스 RFP</h1><p>나라장터 용역·물품·공사·외자에서 현재 입찰 접수 중인 전체 공고와 관련 공식 출처를 공개 링크로 연결합니다. D-7/D-3 표시는 전체 수집 범위 기준입니다. 이 페이지는 정적 스냅샷이며, 공고 적합성·자격·입찰 판단은 담당자가 공식 원문에서 확인해야 합니다.</p></header><section class="kpis">{card_html}</section><section class="panel"><div class="filters"><div><label for="search">통합 검색</label><input id="search" placeholder="공고명, 기관, 과업 요약"></div><div><label for="source">출처</label><select id="source"><option value="">전체</option>{source_select}</select></div><div><label for="document">문서 상태</label><select id="document"><option value="">전체</option>{document_select}</select></div><div><label for="deadline">마감일 이전</label><input id="deadline" type="date"></div><button id="reset" type="button">필터 초기화</button></div><p class="count"><strong id="visible-count">{len(notices)}</strong>건 표시 중</p><p class="note">금액은 공고 목록 또는 공개 문서에 표시된 기준 금액입니다. 예산액·소요예산·추정가격·입찰금액·계약금액은 서로 다른 개념이므로, 금액 기준과 VAT 포함 여부를 원문에서 확인하세요.</p><div class="table-wrap"><table><thead><tr><th>공고명 / 출처</th><th>발주기관</th><th>마감</th><th>공고목록 금액 / 방식</th><th>문서·요약</th><th>원문</th></tr></thead><tbody id="notice-rows">{''.join(rows)}</tbody></table></div></section></main><script>
 const rows=Array.from(document.querySelectorAll('.notice-row'));const controls=['search','source','document','deadline'].map(id=>document.getElementById(id));const count=document.getElementById('visible-count');function applyFilters(){{const query=document.getElementById('search').value.trim().toLocaleLowerCase();const source=document.getElementById('source').value;const documentStatus=document.getElementById('document').value;const deadline=document.getElementById('deadline').value;let visibleCount=0;rows.forEach(row=>{{const visible=(!query||row.dataset.search.includes(query))&&(!source||row.dataset.source===source)&&(!documentStatus||row.dataset.document===documentStatus)&&(!deadline||(row.dataset.deadline&&row.dataset.deadline<=deadline));row.style.display=visible?'':'none';if(visible)visibleCount+=1;}});count.textContent=String(visibleCount);}}controls.forEach(control=>control.addEventListener('input',applyFilters));document.getElementById('reset').addEventListener('click',()=>{{controls.forEach(control=>{{control.value='';}});applyFilters();}});
 </script></body></html>"""
+    page = page.replace(
+        '<div><label for="deadline">마감일 이전</label>',
+        '<div><label for="deadline-priority">중요 마감</label><select id="deadline-priority"><option value="">전체</option><option value="D-7">D-7</option><option value="D-3">D-3</option></select></div><div><label for="deadline">마감일 이전</label>',
+        1,
+    )
+    page = page.replace(
+        "const controls=['search','source','document','deadline'].map(id=>document.getElementById(id));",
+        "const controls=['search','source','document','deadline-priority','deadline'].map(id=>document.getElementById(id));",
+        1,
+    )
+    page = page.replace(
+        "const deadline=document.getElementById('deadline').value;let visibleCount=0;",
+        "const deadlinePriority=document.getElementById('deadline-priority').value;const deadline=document.getElementById('deadline').value;let visibleCount=0;",
+        1,
+    )
+    page = page.replace(
+        "&&(!deadline||(row.dataset.deadline&&row.dataset.deadline<=deadline))",
+        "&&(!deadlinePriority||row.dataset.deadlinePriority===deadlinePriority)&&(!deadline||(row.dataset.deadline&&row.dataset.deadline<=deadline))",
+        1,
+    )
     _write_html(path, page)

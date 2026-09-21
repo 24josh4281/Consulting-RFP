@@ -40,6 +40,14 @@ if (-not (Test-Path -LiteralPath $NotificationConfig)) {
 }
 
 Invoke-Checked {
+  python -m rfp_tracker reconcile-open-g2b `
+    --db $Database `
+    --config $Config `
+    --best-effort `
+    --quiet-if-done
+} "reconcile-open-g2b"
+
+Invoke-Checked {
   powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_tracker.ps1 `
     -Days $Days `
     -Config $Config `
@@ -51,6 +59,12 @@ Invoke-Checked {
     -BriefingHtml $BriefingHtml `
     -BriefingMarkdown $BriefingMarkdown
 } "run_tracker"
+
+Invoke-Checked {
+  python -m rfp_tracker render-workbench `
+    --db $Database `
+    --out reports\rfp_workbench_official.html
+} "render-workbench"
 
 function Invoke-NotificationDispatch {
   param(
