@@ -83,7 +83,7 @@ class DocumentInsightTests(unittest.TestCase):
             self.assertEqual(len(attachments), 1)
             self.assertEqual(attachments[0]["label"], "제안요청서.hwpx")
             self.assertEqual(attachments[0]["file_type"], "hwpx")
-            self.assertEqual(payload["notices"][0]["document_status"], "not_attempted")
+            self.assertEqual(payload["notices"][0]["document_status"], "fallback_notice_info")
             self.assertNotIn(
                 "missing_document_url",
                 [item["extraction_status"] for item in payload["notices"][0]["insights"]],

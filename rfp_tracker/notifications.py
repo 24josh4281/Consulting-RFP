@@ -355,6 +355,7 @@ def _newsletter_html(
     subject: str,
     intro: str,
     items: list[dict[str, Any]],
+    new_items: list[dict[str, Any]],
     include_all_tiers: bool,
     generated_at: datetime,
 ) -> str:
@@ -370,6 +371,15 @@ def _newsletter_html(
         )
 
     sections_html = []
+    if include_all_tiers and new_items:
+        sections_html.append(
+            '<tr><td style="padding:0 0 22px 0;">'
+            '<div style="border-left:5px solid #1F6FEB;padding:2px 0 2px 10px;margin:0 0 8px 0;">'
+            f'<div style="font-size:16px;font-weight:800;color:#1F6FEB;">오늘 신규 추가 <span style="font-size:13px;font-weight:600;color:#4B5563;">{len(new_items)}건</span></div>'
+            '<div style="font-size:12px;color:#4B5563;line-height:1.5;margin-top:3px;">이번 수집 사이클에서 처음 확인된 공고입니다. Tier 1·2와 현재 접수 상태를 먼저 확인하세요.</div></div>'
+            f'{_notice_table(new_items, "new", "#1F6FEB", "#E8F0FE")}'
+            '</td></tr>'
+        )
     for tier, title, description, accent, tint in sections:
         sections_html.append(
             '<tr><td style="padding:0 0 22px 0;">'
@@ -451,6 +461,12 @@ def _email_payload(
         raise ValueError(f"Unsupported notification mode: {mode}")
 
     grouped = _items_by_tier(items)
+    new_items = [
+        item
+        for item in items
+        if (first_seen := parse_notice_datetime(str(item.get("first_seen_at") or "")))
+        and first_seen.date() == now.date()
+    ]
     text_lines = [subject, "", intro, ""]
     if mode in {"daily", "weekly"} and deadline_alerts:
         alert_groups = _items_by_tier(deadline_alerts)
@@ -461,6 +477,8 @@ def _email_payload(
                     [f"[{tier_label(tier)}] {len(alert_groups[tier])}건", *_notice_lines(alert_groups[tier])]
                 )
         text_lines.append("")
+    if mode in {"daily", "weekly"} and new_items:
+        text_lines.extend(["[오늘 신규 추가]", *_notice_lines(new_items), ""])
     sections = TIER_SECTIONS if mode in {"daily", "weekly"} else (TIER_SECTIONS[0],)
     for tier, title, description, _accent, _tint in sections:
         text_lines.extend([f"[{title}] {len(grouped[tier])}건", description, *_notice_lines(grouped[tier]), ""])
@@ -472,6 +490,7 @@ def _email_payload(
         subject=subject,
         intro=intro,
         items=items,
+        new_items=new_items,
         include_all_tiers=mode in {"daily", "weekly"},
         generated_at=now,
     )

@@ -223,7 +223,7 @@ Rows marked as `missing` mean the notice exists, but no RFP/task-document link h
 
 ## All-notice workbench and Excel review
 
-The workbench keeps the raw notice and attachment records separate from derived document evidence. It only reads direct public HWPX links; sample, missing, protected, or unsupported documents are shown with an explicit status instead of an invented summary.
+The workbench keeps the raw notice and attachment records separate from derived document evidence. `문서요약` and `reports/rfp_documents.*` contain only public documents that produced a readable summary, amount, or evidence sentence. Unsupported, protected, failed, or missing documents are excluded from the summary and shown in the `보완정보` view with the notice budget, buyer, procurement method, deadline, and official/attachment links.
 
 ~~~powershell
 python -m rfp_tracker extract-documents --db data\rfp_tracker_official.db --cache-dir data\document_cache --file-type hwpx
@@ -233,7 +233,7 @@ python -m rfp_tracker export-workbench-json --db data\rfp_tracker_official.db --
 node .\scripts\build_rfp_workbench_workbook.mjs --input outputs\rfp_workbench_data.json --output outputs\rfp_workbench.xlsx
 ~~~
 
-The workbench begins with an official-source-only Tier 1 priority area; sample records remain in the full list but are not treated as real opportunities. The dashboard, Excel export, and daily/weekly digest expose every currently active in-scope notice, with Tier 1 and Tier 2 shown first. Notices exactly 7 or 3 calendar days from their deadline receive D-7/D-3 priority labels in the dashboards, email briefing and Excel export. The workbook contains five sheets: Dashboard, Notices, Document Summary, Sources, and Bid Fit Review. Its yellow input columns provide a bordered review grid for consulting fit, qualifications, proposed team, bid decision, risks, and reviewer notes. It stores the listing amount and document-derived amount in separate fields with the source basis and evidence excerpt.
+The workbench begins with an official-source-only Tier 1 priority area; sample records remain in the full list but are not treated as real opportunities. The dashboard, Excel export, and daily/weekly digest expose every currently active in-scope notice, with Tier 1 and Tier 2 shown first. Notices exactly 7 or 3 calendar days from their deadline receive D-7/D-3 priority labels in the dashboards, email briefing and Excel export. The workbook contains seven sheets: Dashboard, Notices, Document Summary, Fallback Info, New Notices, Sources, and Bid Fit Review. `신규공고` is a separate list of notices first collected today. Its yellow input columns provide a bordered review grid for consulting fit, qualifications, proposed team, bid decision, risks, and reviewer notes. It stores the listing amount and document-derived amount in separate fields with the source basis and evidence excerpt.
 
 Use the local command below when a reviewed decision should also appear in the internal dashboard. It changes only the separate bid-fit review record, never the source notice, attachment, or document evidence.
 

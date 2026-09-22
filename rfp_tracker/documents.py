@@ -110,6 +110,7 @@ EXTRACTION_STATUS_LABELS = {
     "download_failed": "공개 문서 다운로드 실패",
     "parse_failed": "문서 구조 읽기 실패",
     "not_attempted": "문서 추출 대기",
+    "fallback_notice_info": "공고정보로 보완",
 }
 
 EXTRACTION_STATUS_ORDER = {
@@ -191,6 +192,7 @@ def list_document_rows(
     business_tier: str | None = None,
     min_score: int | None = None,
     include_missing: bool = True,
+    readable_only: bool = False,
 ) -> list[dict[str, object]]:
     """Return one row per collected document link, plus optional gap rows for notices without documents."""
     where_clauses = []
@@ -204,6 +206,23 @@ def list_document_rows(
     if min_score is not None:
         where_clauses.append("n.relevance_score >= ?")
         params.append(min_score)
+    if readable_only:
+        where_clauses.append(
+            """
+            EXISTS (
+              SELECT 1
+              FROM document_insights di
+              WHERE di.notice_id = n.id
+                AND di.document_url = COALESCE(a.url, '')
+                AND di.extraction_status = 'extracted'
+                AND (
+                  TRIM(di.task_summary) <> ''
+                  OR TRIM(di.amount_text) <> ''
+                  OR TRIM(di.evidence_excerpt) <> ''
+                )
+            )
+            """
+        )
 
     where_sql = ""
     if where_clauses:
@@ -576,6 +595,15 @@ def extract_document_insights(
     # original attachment links for Tier 3 remain available in the dashboard/workbook.
     rows = list_document_rows(connection, business_tier="tier_1", include_missing=True)
     rows.extend(list_document_rows(connection, business_tier="tier_2", include_missing=True))
+    # Keep the deterministic sample fixtures processable for regression tests and
+    # demos, without widening production downloads to unrelated Tier 3 notices.
+    existing_ids = {int(row["notice_id"]) for row in rows}
+    rows.extend(
+        row
+        for row in list_document_rows(connection, include_missing=True)
+        if str(row.get("source_id") or "").casefold().startswith("sample")
+        and int(row["notice_id"]) not in existing_ids
+    )
     if file_type:
         normalized_file_type = file_type.lower().lstrip(".")
         rows = [
@@ -712,8 +740,30 @@ def _status_for_insights(insights: list[dict[str, object]]) -> str:
     return min(statuses, key=lambda status: EXTRACTION_STATUS_ORDER.get(status, 99))
 
 
+def _is_readable_insight(insight: dict[str, object]) -> bool:
+    """Return True only when extraction produced information worth showing."""
+    if str(insight.get("extraction_status") or "") != "extracted":
+        return False
+    return any(
+        str(insight.get(field) or "").strip()
+        for field in ("task_summary", "amount_text", "evidence_excerpt")
+    )
+
+
+def _workbench_document_status(
+    insights: list[dict[str, object]], attachments: list[dict[str, object]]
+) -> str:
+    """Use a useful display status without surfacing unsupported-format noise."""
+    if any(_is_readable_insight(item) for item in insights):
+        return "extracted"
+    if insights or attachments:
+        return "fallback_notice_info"
+    return "not_attempted"
+
+
 def _primary_insight(insights: list[dict[str, object]]) -> dict[str, object]:
-    if not insights:
+    readable = [item for item in insights if _is_readable_insight(item)]
+    if not readable:
         return {}
 
     def sort_key(item: dict[str, object]) -> tuple[int, int, str]:
@@ -729,7 +779,7 @@ def _primary_insight(insights: list[dict[str, object]]) -> dict[str, object]:
             str(item.get("document_label") or ""),
         )
 
-    return min(insights, key=sort_key)
+    return min(readable, key=sort_key)
 
 
 def _listing_budget_to_krw(value: object) -> int | None:
@@ -767,7 +817,7 @@ def build_workbench_payload(connection: sqlite3.Connection) -> dict[str, object]
                 str(insight.get("document_url") or ""),
             )
         primary = _primary_insight(insights)
-        document_status = _status_for_insights(insights)
+        document_status = _workbench_document_status(insights, attachments)
         fit_source = _safe_json_object(row["fit_review_json"])
         fit_review = {
             key: str(fit_source.get(key) or default)
@@ -777,6 +827,7 @@ def build_workbench_payload(connection: sqlite3.Connection) -> dict[str, object]
         notice_url = str(row["url"] or "")
         business_tier = str(row["business_tier"] or "unclassified")
         review_status = str(row["review_status"] or "new")
+        first_seen_at = str(row["first_seen_at"] or "")
         deadline = parse_notice_datetime(row["deadline_at"])
         days_remaining = (deadline.date() - current_date).days if deadline else None
         priority_status, priority_rank, priority_reason = _priority_metadata(
@@ -795,6 +846,11 @@ def build_workbench_payload(connection: sqlite3.Connection) -> dict[str, object]
                 "title": str(row["title"] or ""),
                 "url": notice_url,
                 "published_at": str(row["published_at"] or ""),
+                "first_seen_at": first_seen_at,
+                "is_new_today": bool(
+                    (first_seen := parse_notice_datetime(first_seen_at))
+                    and first_seen.date() == current_date
+                ),
                 "deadline_at": str(row["deadline_at"] or ""),
                 "days_remaining": days_remaining,
                 "is_active": is_notice_active(row, current),
@@ -860,6 +916,8 @@ def build_workbench_payload(connection: sqlite3.Connection) -> dict[str, object]
                 "extracted_at": str(insight.get("extracted_at") or ""),
             }
         )
+        if not _is_readable_insight(document_copy):
+            continue
         documents.append(document_copy)
 
     notices.sort(
@@ -875,14 +933,24 @@ def build_workbench_payload(connection: sqlite3.Connection) -> dict[str, object]
         "active_notices": sum(1 for item in notices if item["is_active"]),
         "active_tier_1": sum(1 for item in notices if item["is_active"] and item["business_tier"] == "tier_1"),
         "active_tier_2": sum(1 for item in notices if item["is_active"] and item["business_tier"] == "tier_2"),
+        "new_today": sum(1 for item in notices if item["is_new_today"]),
+        "new_active_today": sum(1 for item in notices if item["is_new_today"] and item["is_active"]),
+        "new_tier_1_today": sum(1 for item in notices if item["is_new_today"] and item["business_tier"] == "tier_1"),
+        "new_tier_2_today": sum(1 for item in notices if item["is_new_today"] and item["business_tier"] == "tier_2"),
         "tier_1": sum(1 for item in notices if item["business_tier"] == "tier_1"),
         "tier_2": sum(1 for item in notices if item["business_tier"] == "tier_2"),
         "tier_3": sum(1 for item in notices if item["business_tier"] == "tier_3"),
         "extracted_documents": sum(
             1 for item in documents if item["extraction_status"] == "extracted"
         ),
+        "fallback_notices": sum(
+            1 for item in notices if item["document_status"] == "fallback_notice_info"
+        ),
         "missing_document_urls": sum(
-            1 for item in documents if item["extraction_status"] == "missing_document_url"
+            1
+            for item in notices
+            if item["document_status"] == "fallback_notice_info"
+            and not any(str(attachment.get("url") or "").strip() for attachment in item["attachments"])
         ),
         "official_tier_1_priorities": sum(
             1 for item in notices if item["priority_status"] == "official_tier_1"
@@ -890,7 +958,12 @@ def build_workbench_payload(connection: sqlite3.Connection) -> dict[str, object]
         "deadline_d7": sum(1 for item in notices if item["deadline_priority"] == "D-7"),
         "deadline_d3": sum(1 for item in notices if item["deadline_priority"] == "D-3"),
     }
-    return {"summary": summary, "notices": notices, "documents": documents}
+    return {
+        "summary": summary,
+        "notices": notices,
+        "documents": documents,
+        "fallback_notices": [item for item in notices if item["document_status"] != "extracted"],
+    }
 
 
 def build_public_workbench_payload(connection: sqlite3.Connection) -> dict[str, object]:
@@ -932,7 +1005,7 @@ def build_public_workbench_payload(connection: sqlite3.Connection) -> dict[str, 
             if _is_http_document_url(str(item.get("document_url") or ""))
         ]
         primary = _primary_insight(insights)
-        document_status = _status_for_insights(insights)
+        document_status = _workbench_document_status(insights, attachments)
         public_notices.append(
             {
                 "id": int(notice["id"]),
@@ -940,6 +1013,8 @@ def build_public_workbench_payload(connection: sqlite3.Connection) -> dict[str, 
                 "title": str(notice.get("title") or ""),
                 "url": notice_url,
                 "published_at": str(notice.get("published_at") or ""),
+                "first_seen_at": str(notice.get("first_seen_at") or ""),
+                "is_new_today": bool(notice.get("is_new_today")),
                 "deadline_at": str(notice.get("deadline_at") or ""),
                 "is_active": bool(notice.get("is_active")),
                 "deadline_priority": str(notice.get("deadline_priority") or ""),
@@ -980,10 +1055,20 @@ def build_public_workbench_payload(connection: sqlite3.Connection) -> dict[str, 
             }
         )
 
+    public_document_links = len(
+        {
+            str(attachment.get("url") or "")
+            for notice in public_notices
+            for attachment in list(notice.get("attachments") or [])
+            if str(attachment.get("url") or "").strip()
+        }
+    )
     summary = {
         "total_notices": len(public_notices),
         "active_notices": sum(1 for item in public_notices if item["is_active"]),
-        "public_document_links": len(public_documents),
+        "new_today": sum(1 for item in public_notices if item["is_new_today"]),
+        "new_active_today": sum(1 for item in public_notices if item["is_new_today"] and item["is_active"]),
+        "public_document_links": public_document_links,
         "extracted_documents": sum(
             1 for item in public_documents if item["extraction_status"] == "extracted"
         ),

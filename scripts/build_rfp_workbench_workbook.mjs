@@ -243,6 +243,7 @@ function noticeRows(notices) {
       text(notice.url),
       text(insight.document_url || attachment.url),
       text(notice.review_note),
+      notice.is_new_today ? "오늘 신규" : "",
     ];
   });
 }
@@ -269,6 +270,63 @@ function documentRows(documents) {
     text(document.document_access_hint || document.error_message),
     text(document.extracted_at),
     ]);
+}
+
+
+function fallbackRows(notices) {
+  return notices
+    .filter((notice) => text(notice.document_status) !== "extracted")
+    .map((notice) => {
+      const insight = primaryInsight(notice);
+      const attachment = (notice.attachments || [])[0] || {};
+      return [
+        integer(notice.id),
+        tierLabel(notice.business_tier),
+        notice.is_active ? "현재 접수 중" : "마감 경과·확인 필요",
+        notice.is_new_today ? "오늘 신규" : "",
+        text(notice.title),
+        text(notice.buyer),
+        text(notice.source_name),
+        asDate(notice.published_at),
+        asDate(notice.deadline_at),
+        text(notice.deadline_priority),
+        text(notice.procurement_method),
+        integer(notice.budget_value_krw),
+        text(notice.budget),
+        text(notice.document_status_label),
+        text(notice.url),
+        text(insight.document_url || attachment.url),
+        text(notice.review_note),
+      ];
+    });
+}
+
+
+function newNoticeRows(notices) {
+  return notices
+    .filter((notice) => notice.is_new_today)
+    .map((notice) => {
+      const insight = primaryInsight(notice);
+      const attachment = (notice.attachments || [])[0] || {};
+      return [
+        integer(notice.id),
+        tierLabel(notice.business_tier),
+        notice.is_active ? "현재 접수 중" : "마감 경과·확인 필요",
+        text(notice.title),
+        text(notice.buyer),
+        text(notice.source_name),
+        asDate(notice.published_at),
+        asDate(notice.deadline_at),
+        text(notice.deadline_priority),
+        text(notice.procurement_method),
+        integer(notice.budget_value_krw),
+        text(notice.budget),
+        text(notice.document_status_label),
+        text(notice.url),
+        text(insight.document_url || attachment.url),
+        text(notice.first_seen_at),
+      ];
+    });
 }
 
 
@@ -327,6 +385,7 @@ function fitReviewRows(notices) {
       text(review.decision_note),
       text(notice.url),
       text(insight.document_url || attachment.url),
+      notice.is_new_today ? "오늘 신규" : "",
     ];
   });
 }
@@ -346,8 +405,8 @@ function buildDashboard(sheet, notices, documents) {
   addCard(sheet, 3, "현재 접수 중", "=COUNTIFS('공고목록'!$C$7:$C$" + noticeEnd + ",\"현재 접수 중\")", COLORS.paleBlue);
   addCard(sheet, 6, "현재 접수 중 Tier 1", "=COUNTIFS('공고목록'!$B$7:$B$" + noticeEnd + ",\"Tier 1\",'공고목록'!$C$7:$C$" + noticeEnd + ",\"현재 접수 중\")", COLORS.paleGreen);
   addCard(sheet, 9, "현재 접수 중 Tier 2", "=COUNTIFS('공고목록'!$B$7:$B$" + noticeEnd + ",\"Tier 2\",'공고목록'!$C$7:$C$" + noticeEnd + ",\"현재 접수 중\")", COLORS.paleAmber);
-  addCard(sheet, 12, "Tier 3", "=COUNTIFS('공고목록'!$B$7:$B$" + noticeEnd + ",\"Tier 3\")", COLORS.paleGray);
-  addCard(sheet, 12, "공개 원문 추출 완료", "=COUNTIFS('문서요약'!$G$7:$G$" + documentEnd + ",\"공개 원문 추출 완료\")", COLORS.paleGreen);
+  const newNoticeEnd = Math.max(7, notices.filter((notice) => notice.is_new_today).length + 6);
+  addCard(sheet, 12, "오늘 신규 추가", "=COUNTA('신규공고'!$A$7:$A$" + newNoticeEnd + ")", COLORS.paleAmber);
 
   sheet.getRange("A9:A10").values = [["D-7 중요 마감"], ["D-3 중요 마감"]];
   sheet.getRange("B9").formulas = [["=COUNTIFS('공고목록'!$J$7:$J$" + noticeEnd + ",\"D-7\")"]];
@@ -408,25 +467,25 @@ function buildFitReviewSheet(sheet, notices) {
   const headers = [
     "공고 ID", "Tier", "접수 상태", "공고명", "발주기관", "마감일", "문서 상태",
     "컨설팅 적합성", "필요 자격·등록", "예상 투입인력", "입찰 의견",
-    "핵심 위험·확인사항", "검토 메모", "공식 공고 URL", "대표 RFP/과업지시서 URL",
+    "핵심 위험·확인사항", "검토 메모", "공식 공고 URL", "대표 RFP/과업지시서 URL", "신규 추가",
   ];
   const rows = fitReviewRows(notices);
   const end = Math.max(7, rows.length + 6);
-  sheet.getRange("A6:O6").values = [headers];
-  if (rows.length) sheet.getRange("A7:O" + end).values = rows;
-  styleTable(sheet, "A6:O6", "A7:O" + end, "BidFitReviewTable");
+  sheet.getRange("A6:P6").values = [headers];
+  if (rows.length) sheet.getRange("A7:P" + end).values = rows;
+  styleTable(sheet, "A6:P6", "A7:P" + end, "BidFitReviewTable");
   sheet.getRange("F7:F" + end).setNumberFormat("yyyy-mm-dd hh:mm");
   sheet.getRange("H7:M" + end).format.fill = COLORS.paleAmber;
   sheet.getRange("H7:M" + end).format.wrapText = true;
   sheet.getRange("D7:D" + end).format.wrapText = true;
-  sheet.getRange("A7:O" + end).format.rowHeight = 58;
+  sheet.getRange("A7:P" + end).format.rowHeight = 58;
   sheet.getRange("H7:H" + end).dataValidation = {
     rule: { type: "list", values: ["미검토", "높음", "보통", "낮음"] },
   };
   sheet.getRange("K7:K" + end).dataValidation = {
     rule: { type: "list", values: ["미결정", "입찰 검토", "조건부 검토", "미입찰"] },
   };
-  setWidths(sheet, [10, 11, 18, 48, 22, 18, 25, 16, 33, 31, 17, 40, 42, 50, 54]);
+  setWidths(sheet, [10, 11, 18, 48, 22, 18, 25, 16, 33, 31, 17, 40, 42, 50, 54, 14]);
   sheet.freezePanes.freezeRows(6);
   sheet.freezePanes.freezeColumns(3);
 }
@@ -438,19 +497,19 @@ function buildNoticesSheet(sheet, notices) {
     sheet,
     "공고목록",
     "대표 문서만 표시합니다. 복수 문서의 근거와 원문은 문서요약 시트에서 확인하세요.",
-    22,
+    23,
   );
   const headers = [
     "공고 ID", "Tier", "접수 상태", "Tier 판단 근거", "검토상태", "공고명", "발주기관", "출처",
     "공고일", "마감일", "중요 마감", "입찰방식", "공고목록 금액(원)", "공고목록 금액 원문",
     "문서 상태", "과업 간단 요약", "문서 추출 금액(원)", "문서 금액 원문",
-    "금액 기준", "공식 공고 URL", "대표 RFP/과업지시서 URL", "검토 메모",
+    "금액 기준", "공식 공고 URL", "대표 RFP/과업지시서 URL", "검토 메모", "신규 추가",
   ];
   const rows = noticeRows(notices);
   const end = Math.max(7, rows.length + 6);
-  sheet.getRange("A6:V6").values = [headers];
-  if (rows.length) sheet.getRange("A7:V" + end).values = rows;
-  styleTable(sheet, "A6:V6", "A7:V" + end, "WorkbenchNoticesTable");
+  sheet.getRange("A6:W6").values = [headers];
+  if (rows.length) sheet.getRange("A7:W" + end).values = rows;
+  styleTable(sheet, "A6:W6", "A7:W" + end, "WorkbenchNoticesTable");
   sheet.getRange("I7:J" + end).setNumberFormat("yyyy-mm-dd hh:mm");
   sheet.getRange("M7:M" + end).setNumberFormat("#,##0");
   sheet.getRange("Q7:Q" + end).setNumberFormat("#,##0");
@@ -459,7 +518,8 @@ function buildNoticesSheet(sheet, notices) {
   sheet.getRange("F7:F" + end).format.wrapText = true;
   sheet.getRange("P7:P" + end).format.wrapText = true;
   sheet.getRange("V7:V" + end).format.wrapText = true;
-  sheet.getRange("A7:V" + end).format.rowHeight = 52;
+  sheet.getRange("W7:W" + end).format.font = { bold: true, color: "#205D36" };
+  sheet.getRange("A7:W" + end).format.rowHeight = 52;
   notices.forEach((notice, index) => {
     const row = index + 7;
     sheet.getRange("C" + row).format.fill = notice.is_active ? COLORS.paleGreen : COLORS.paleGray;
@@ -467,7 +527,7 @@ function buildNoticesSheet(sheet, notices) {
     if (priority === "D-7") sheet.getRange("J" + row).format.fill = COLORS.paleAmber;
     if (priority === "D-3") sheet.getRange("J" + row).format.fill = COLORS.paleRed;
   });
-  setWidths(sheet, [10, 11, 18, 28, 14, 52, 22, 24, 18, 18, 15, 18, 18, 22, 24, 58, 18, 18, 16, 48, 48, 28, 28]);
+  setWidths(sheet, [10, 11, 18, 28, 14, 52, 22, 24, 18, 18, 15, 18, 18, 22, 24, 58, 18, 18, 16, 48, 48, 28, 14]);
   sheet.freezePanes.freezeRows(6);
   sheet.freezePanes.freezeColumns(5);
 }
@@ -478,7 +538,7 @@ function buildDocumentsSheet(sheet, documents) {
   writeHeading(
     sheet,
     "문서요약",
-    "Tier 1·2 문서만 요약합니다. Tier 3의 공식 첨부 링크는 공고목록 시트에서 확인하세요.",
+    "읽을 수 있는 공개 원문만 요약합니다. 지원하지 않는 형식·추출 실패 문서는 제외하고 보완정보 시트에서 공고 금액·마감·입찰방식·원문 링크로 확인하세요.",
     16,
   );
   const headers = [
@@ -501,6 +561,63 @@ function buildDocumentsSheet(sheet, documents) {
   setWidths(sheet, [10, 11, 47, 20, 38, 13, 27, 60, 18, 18, 16, 58, 54, 52, 42, 21]);
   sheet.freezePanes.freezeRows(6);
   sheet.freezePanes.freezeColumns(3);
+}
+
+
+function buildFallbackSheet(sheet, notices) {
+  setBaseStyle(sheet);
+  writeHeading(
+    sheet,
+    "보완정보",
+    "읽을 수 있는 문서 요약이 없는 공고입니다. 예산·마감·입찰방식·발주기관·공식 링크로 우선 검토하세요.",
+    17,
+  );
+  const headers = [
+    "공고 ID", "Tier", "접수 상태", "신규 추가", "공고명", "발주기관", "출처",
+    "공고일", "마감일", "중요 마감", "입찰방식", "공고목록 금액(원)", "공고목록 금액 원문",
+    "문서 상태", "공식 공고 URL", "대표 RFP/과업지시서 URL", "검토 메모",
+  ];
+  const rows = fallbackRows(notices);
+  const end = Math.max(7, rows.length + 6);
+  sheet.getRange("A6:Q6").values = [headers];
+  if (rows.length) sheet.getRange("A7:Q" + end).values = rows;
+  styleTable(sheet, "A6:Q6", "A7:Q" + end, "FallbackNoticeTable");
+  sheet.getRange("H7:I" + end).setNumberFormat("yyyy-mm-dd hh:mm");
+  sheet.getRange("L7:L" + end).setNumberFormat("#,##0");
+  sheet.getRange("E7:E" + end).format.wrapText = true;
+  sheet.getRange("Q7:Q" + end).format.wrapText = true;
+  sheet.getRange("A7:Q" + end).format.rowHeight = 48;
+  setWidths(sheet, [10, 11, 18, 14, 52, 22, 24, 18, 18, 15, 18, 18, 22, 22, 48, 48, 28]);
+  sheet.freezePanes.freezeRows(6);
+  sheet.freezePanes.freezeColumns(5);
+}
+
+
+function buildNewNoticesSheet(sheet, notices) {
+  setBaseStyle(sheet);
+  writeHeading(
+    sheet,
+    "신규공고",
+    "오늘 처음 수집된 공고를 별도로 표시합니다. 현재 접수 중 공고와 Tier 1·2를 우선 확인하세요.",
+    16,
+  );
+  const headers = [
+    "공고 ID", "Tier", "접수 상태", "공고명", "발주기관", "출처", "공고일", "마감일",
+    "중요 마감", "입찰방식", "공고목록 금액(원)", "공고목록 금액 원문", "문서 상태",
+    "공식 공고 URL", "대표 RFP/과업지시서 URL", "최초 수집시각",
+  ];
+  const rows = newNoticeRows(notices);
+  const end = Math.max(7, rows.length + 6);
+  sheet.getRange("A6:P6").values = [headers];
+  if (rows.length) sheet.getRange("A7:P" + end).values = rows;
+  styleTable(sheet, "A6:P6", "A7:P" + end, "NewNoticesTable");
+  sheet.getRange("G7:H" + end).setNumberFormat("yyyy-mm-dd hh:mm");
+  sheet.getRange("K7:K" + end).setNumberFormat("#,##0");
+  sheet.getRange("D7:D" + end).format.wrapText = true;
+  sheet.getRange("A7:P" + end).format.rowHeight = 48;
+  setWidths(sheet, [10, 11, 18, 52, 22, 24, 18, 18, 15, 18, 18, 22, 22, 48, 48, 21]);
+  sheet.freezePanes.freezeRows(6);
+  sheet.freezePanes.freezeColumns(4);
 }
 
 
@@ -556,10 +673,12 @@ async function renderPreviews(workbook, previewDir) {
   await fs.mkdir(previewDir, { recursive: true });
   const targets = [
     ["대시보드", "A1:N24", "01_dashboard.png"],
-    ["공고목록", "A1:V14", "02_notices.png"],
+    ["공고목록", "A1:W14", "02_notices.png"],
     ["문서요약", "A1:P14", "03_documents.png"],
-    ["출처안내", "A1:D22", "04_sources.png"],
-    ["입찰적합성검토", "A1:O14", "05_bid_fit_review.png"],
+    ["보완정보", "A1:Q14", "04_fallback.png"],
+    ["신규공고", "A1:P14", "05_new_notices.png"],
+    ["출처안내", "A1:D22", "06_sources.png"],
+    ["입찰적합성검토", "A1:P14", "07_bid_fit_review.png"],
   ];
   for (const [sheetName, range, fileName] of targets) {
     const preview = await workbook.render({ sheetName, range, scale: 1, format: "png" });
@@ -579,17 +698,23 @@ async function main() {
   const dashboard = workbook.worksheets.add("대시보드");
   const noticesSheet = workbook.worksheets.add("공고목록");
   const documentsSheet = workbook.worksheets.add("문서요약");
+  const fallbackSheet = workbook.worksheets.add("보완정보");
+  const newNoticesSheet = workbook.worksheets.add("신규공고");
   const sourcesSheet = workbook.worksheets.add("출처안내");
   const fitReviewSheet = workbook.worksheets.add("입찰적합성검토");
   dashboard.tabColor = COLORS.navy;
   noticesSheet.tabColor = COLORS.teal;
   documentsSheet.tabColor = "#2B7A4B";
+  fallbackSheet.tabColor = "#B7791F";
+  newNoticesSheet.tabColor = "#C05621";
   sourcesSheet.tabColor = "#7A8793";
-  fitReviewSheet.tabColor = "#B7791F";
+  fitReviewSheet.tabColor = "#805AD5";
 
   buildDashboard(dashboard, notices, documents);
   buildNoticesSheet(noticesSheet, orderedNotices);
   buildDocumentsSheet(documentsSheet, documents);
+  buildFallbackSheet(fallbackSheet, orderedNotices);
+  buildNewNoticesSheet(newNoticesSheet, orderedNotices);
   buildSourcesSheet(sourcesSheet, notices, documents);
   buildFitReviewSheet(fitReviewSheet, orderedNotices);
 
@@ -604,10 +729,10 @@ async function main() {
   console.log(dashboardCheck.ndjson);
   const fitReviewCheck = await workbook.inspect({
     kind: "table",
-    range: "입찰적합성검토!A1:O14",
+    range: "입찰적합성검토!A1:P14",
     include: "values,formulas",
     tableMaxRows: 14,
-    tableMaxCols: 15,
+    tableMaxCols: 16,
   });
   console.log(fitReviewCheck.ndjson);
   const errors = await workbook.inspect({

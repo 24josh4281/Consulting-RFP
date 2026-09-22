@@ -374,7 +374,8 @@ def render_documents_command(args: argparse.Namespace) -> int:
         status=args.status,
         business_tier=args.tier,
         min_score=args.min_score,
-        include_missing=not args.hide_missing,
+        include_missing=False,
+        readable_only=True,
     )
     render_documents_report(rows, args.html)
     write_documents_csv(rows, args.csv)
@@ -992,7 +993,11 @@ def build_parser() -> argparse.ArgumentParser:
     render_documents.add_argument("--status", choices=sorted(VALID_REVIEW_STATUSES))
     render_documents.add_argument("--tier", choices=sorted(VALID_BUSINESS_TIERS))
     render_documents.add_argument("--min-score", type=int)
-    render_documents.add_argument("--hide-missing", action="store_true")
+    render_documents.add_argument(
+        "--hide-missing",
+        action="store_true",
+        help="호환성을 위해 유지합니다. 읽을 수 있는 문서만 출력하므로 항상 누락·지원불가 문서는 제외됩니다.",
+    )
     render_documents.set_defaults(func=render_documents_command)
 
     briefing = subparsers.add_parser("briefing", help="Create daily climate RFP briefing HTML and Markdown")

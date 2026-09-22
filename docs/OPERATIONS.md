@@ -82,7 +82,7 @@ python -m rfp_tracker rfp-documents --db data\rfp_tracker.db --limit 50
 
 ## 3.1 전체 공고 작업대와 Excel
 
-동기화 스크립트는 수집된 직접 공개 HWPX 문서만 별도 cache로 읽어 과업 요약·금액 근거를 갱신합니다. 샘플, 로그인 필요, 첨부 URL 미수집, 지원하지 않는 형식은 원문을 바꾸지 않고 상태로만 남깁니다.
+동기화 스크립트는 수집된 직접 공개 HWPX 문서만 별도 cache로 읽어 과업 요약·금액 근거를 갱신합니다. `문서요약`에는 실제로 요약·금액·근거 문장을 얻은 공개 원문만 넣습니다. 샘플, 로그인 필요, 첨부 URL 미수집, 지원하지 않는 형식은 요약에서 제외하고 `보완정보`에 공고 금액·발주기관·입찰방식·마감·공식 링크로 표시합니다.
 
 전체 공고를 Tier, 검토상태, 출처, 문서 상태, 마감일로 한 화면에서 확인하려면 아래 명령을 실행합니다.
 
@@ -92,7 +92,7 @@ python -m rfp_tracker extract-documents --db data\rfp_tracker_official.db --cach
 python -m rfp_tracker render-workbench --db data\rfp_tracker_official.db --out reports\rfp_workbench_official.html
 ~~~
 
-- reports/rfp_workbench_official.html: 공식 출처 Tier 1 우선 검토, 원문 공고 링크, RFP·과업지시서, 간단 과업 요약, 금액 기준·근거를 함께 보여주는 작업대
+- reports/rfp_workbench_official.html: 공식 출처 Tier 1 우선 검토, 원문 공고 링크, RFP·과업지시서, 간단 과업 요약, 금액 기준·근거를 함께 보여주는 작업대. `오늘 신규 추가`와 `공고정보로 보완` 영역도 별도로 제공
 - data/document_cache: 직접 공개된 원문 파일의 로컬 cache
 
 Excel 검토 파일은 아래 순서로 만듭니다.
@@ -103,6 +103,8 @@ node .\scripts\build_rfp_workbench_workbook.mjs --input outputs\rfp_workbench_da
 ~~~
 
 Excel의 공고목록 금액과 문서 추출 금액은 구분되어 있습니다. 예산액, 소요예산, 추정가격, 투찰금액, 계약금액은 서로 다른 값일 수 있으므로 문서요약 시트의 금액 기준과 근거 문장을 같이 확인하세요.
+
+`보완정보` 시트는 읽을 수 없는 문서의 대체 검토표이며, `신규공고` 시트는 당일 처음 수집된 공고만 모은 목록입니다. 따라서 문서 형식이 지원되지 않아도 공고 자체를 놓치지 않고 금액·마감·입찰방식·원문 링크를 확인할 수 있습니다.
 
 `입찰적합성검토` 시트의 노란색 열에는 컨설팅 적합성, 필요 자격·등록, 예상 투입인력, 입찰 의견, 위험, 메모를 기록합니다. 이 판단은 원문 공고와 분리된 내부 검토 정보입니다. 대시보드에도 남길 필요가 있으면 다음 명령으로 같은 공고 ID의 검토표를 저장합니다.
 
