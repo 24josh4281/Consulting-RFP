@@ -613,6 +613,26 @@ def list_notices(
     )
 
 
+def delete_notices(connection: sqlite3.Connection, notice_ids: list[int]) -> int:
+    """Delete a reviewed set of notices and their dependent records.
+
+    The database schema enables foreign-key cascades for attachments, document
+    insights, and bid-fit reviews. Notification rows keep their audit record and
+    release the deleted notice reference through ``ON DELETE SET NULL``.
+    """
+    if not notice_ids:
+        return 0
+    unique_ids = sorted({int(notice_id) for notice_id in notice_ids})
+    connection.execute("PRAGMA foreign_keys = ON")
+    placeholders = ", ".join("?" for _ in unique_ids)
+    cursor = connection.execute(
+        f"DELETE FROM notices WHERE id IN ({placeholders})",
+        unique_ids,
+    )
+    connection.commit()
+    return int(cursor.rowcount)
+
+
 def upsert_document_insight(
     connection: sqlite3.Connection,
     *,

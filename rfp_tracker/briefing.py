@@ -47,6 +47,20 @@ def deadline_priority_label(days_remaining: int | None) -> str:
     return f"D-{days_remaining}" if days_remaining in {7, 3} else ""
 
 
+def is_notice_active(row: Any, now: datetime | None = None) -> bool:
+    """Return whether a stored notice is still accepting bids or has no known deadline."""
+    current = now or seoul_now()
+    deadline_text = str(row["deadline_at"] or "").strip()
+    deadline = parse_notice_datetime(deadline_text)
+    if deadline is None:
+        return True
+    digits = "".join(character for character in deadline_text if character.isdigit())
+    # Date-only source values represent the whole KST calendar day, not midnight.
+    if len(digits) <= 8:
+        return deadline.date() >= current.date()
+    return deadline >= current
+
+
 def _json_list(value: object) -> list[dict[str, Any]]:
     if isinstance(value, list):
         return [item for item in value if isinstance(item, dict)]
@@ -139,6 +153,7 @@ def build_briefing(
         item
         for item in views
         if item["relevance_score"] >= min_score
+        and is_notice_active(item, current)
         and item["review_status"] not in {"not_relevant", "closed", "needs_review"}
     ]
     today_new = [

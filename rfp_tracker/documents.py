@@ -15,7 +15,7 @@ from urllib.parse import unquote, urlparse
 from xml.etree import ElementTree
 
 from .fetchers import extract_g2b_spec_attachments
-from .briefing import deadline_priority_label, parse_notice_datetime, seoul_now
+from .briefing import deadline_priority_label, is_notice_active, parse_notice_datetime, seoul_now
 from .keyword_matcher import extension_from_url, normalize_text
 from .storage import list_workbench_notices, upsert_attachments_for_notice, upsert_document_insight
 
@@ -740,7 +740,8 @@ def _listing_budget_to_krw(value: object) -> int | None:
 def build_workbench_payload(connection: sqlite3.Connection) -> dict[str, object]:
     """Build a non-secret, source-preserving dataset for HTML and Excel outputs."""
     notices: list[dict[str, object]] = []
-    current_date = seoul_now().date()
+    current = seoul_now()
+    current_date = current.date()
     for row in list_workbench_notices(connection):
         attachments = [
             dict(item) for item in _safe_json_list(row["attachments_json"]) if isinstance(item, dict)
@@ -796,6 +797,7 @@ def build_workbench_payload(connection: sqlite3.Connection) -> dict[str, object]
                 "published_at": str(row["published_at"] or ""),
                 "deadline_at": str(row["deadline_at"] or ""),
                 "days_remaining": days_remaining,
+                "is_active": is_notice_active(row, current),
                 "deadline_priority": deadline_priority_label(days_remaining),
                 "buyer": str(row["buyer"] or ""),
                 "budget": str(row["budget"] or ""),
@@ -870,6 +872,9 @@ def build_workbench_payload(connection: sqlite3.Connection) -> dict[str, object]
     )
     summary = {
         "total_notices": len(notices),
+        "active_notices": sum(1 for item in notices if item["is_active"]),
+        "active_tier_1": sum(1 for item in notices if item["is_active"] and item["business_tier"] == "tier_1"),
+        "active_tier_2": sum(1 for item in notices if item["is_active"] and item["business_tier"] == "tier_2"),
         "tier_1": sum(1 for item in notices if item["business_tier"] == "tier_1"),
         "tier_2": sum(1 for item in notices if item["business_tier"] == "tier_2"),
         "tier_3": sum(1 for item in notices if item["business_tier"] == "tier_3"),
@@ -936,6 +941,7 @@ def build_public_workbench_payload(connection: sqlite3.Connection) -> dict[str, 
                 "url": notice_url,
                 "published_at": str(notice.get("published_at") or ""),
                 "deadline_at": str(notice.get("deadline_at") or ""),
+                "is_active": bool(notice.get("is_active")),
                 "deadline_priority": str(notice.get("deadline_priority") or ""),
                 "buyer": str(notice.get("buyer") or ""),
                 "budget": str(notice.get("budget") or ""),
@@ -976,6 +982,7 @@ def build_public_workbench_payload(connection: sqlite3.Connection) -> dict[str, 
 
     summary = {
         "total_notices": len(public_notices),
+        "active_notices": sum(1 for item in public_notices if item["is_active"]),
         "public_document_links": len(public_documents),
         "extracted_documents": sum(
             1 for item in public_documents if item["extraction_status"] == "extracted"

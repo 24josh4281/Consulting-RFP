@@ -37,7 +37,7 @@ from .documents import (
     write_documents_csv,
 )
 from .fetchers import build_fetcher
-from .keyword_matcher import assess_g2b_title
+from .keyword_matcher import assess_g2b_title, is_climate_related_title
 from .notifications import (
     dispatch_notifications,
     initialize_baseline,
@@ -50,6 +50,7 @@ from .storage import (
     VALID_BID_DECISIONS,
     VALID_CONSULTING_FITS,
     connect,
+    delete_notices,
     finish_run,
     get_bid_fit_review,
     finish_g2b_open_reconciliation,
@@ -733,6 +734,40 @@ def g2b_title_audit_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def prune_non_climate_command(args: argparse.Namespace) -> int:
+    """Remove stored notices outside the configured climate/environment scope."""
+    keyword_config = read_json(args.keywords)
+    connection = connect(args.db)
+    rows = connection.execute(
+        "SELECT id, source_id, title, business_tier, review_status FROM notices ORDER BY id ASC"
+    ).fetchall()
+    remove_ids: list[int] = []
+    reason_counts = {"excluded_term": 0, "no_domain_signal": 0}
+    for row in rows:
+        title = str(row["title"] or "")
+        if not is_climate_related_title(title, keyword_config):
+            remove_ids.append(int(row["id"]))
+            if any(term.casefold() in title.casefold() for term in keyword_config.get("exclude_terms", [])):
+                reason_counts["excluded_term"] += 1
+            else:
+                reason_counts["no_domain_signal"] += 1
+
+    print(
+        "[prune-non-climate] "
+        f"total={len(rows)} remove={len(remove_ids)} keep={len(rows) - len(remove_ids)} "
+        f"excluded_term={reason_counts['excluded_term']} "
+        f"no_domain_signal={reason_counts['no_domain_signal']}"
+    )
+    if not args.apply:
+        print("[note] No notice changed. Re-run with --apply after reviewing the counts.")
+        return 0
+
+    deleted = delete_notices(connection, remove_ids)
+    print(f"[done] 비관련 공고 삭제: {deleted}건")
+    print("[note] 첨부·문서 추출·입찰 적합성 기록은 해당 공고와 함께 삭제되며, 메일 발송 이력은 보존됩니다.")
+    return 0
+
+
 def stats_command(args: argparse.Namespace) -> int:
     connection = connect(args.db)
     rows = review_stats(connection)
@@ -1066,6 +1101,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="강한 공고명 신호가 없는 현재 new 항목만 needs_review로 표시합니다.",
     )
     g2b_title_audit.set_defaults(func=g2b_title_audit_command)
+
+    prune_non_climate = subparsers.add_parser(
+        "prune-non-climate",
+        help="기후·온실가스·배출권·환경 범위 밖의 저장 공고를 정리",
+    )
+    prune_non_climate.add_argument("--db", default=str(ROOT_DIR / "data" / "rfp_tracker.db"))
+    prune_non_climate.add_argument("--keywords", default=str(DEFAULT_KEYWORDS))
+    prune_non_climate.add_argument("--apply", action="store_true", help="비관련 공고를 실제 삭제합니다.")
+    prune_non_climate.set_defaults(func=prune_non_climate_command)
 
     stats = subparsers.add_parser("stats", help="검토 상태별 공고 수 요약")
     stats.add_argument("--db", default=str(ROOT_DIR / "data" / "rfp_tracker.db"))

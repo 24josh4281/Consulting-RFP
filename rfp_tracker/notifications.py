@@ -12,7 +12,7 @@ from email.utils import parseaddr
 from pathlib import Path
 from typing import Any, Callable
 
-from .briefing import notice_view, parse_notice_datetime, seoul_now
+from .briefing import is_notice_active, notice_view, parse_notice_datetime, seoul_now
 from .config import read_json, write_json
 from .storage import (
     get_notification_setting,
@@ -116,6 +116,21 @@ def _notice_is_not_historical(row: Any, baseline_at: str) -> bool:
     if len(digits) <= 8:
         return published.date() >= baseline.date()
     return published >= baseline
+
+
+def _active_notice_rows(connection: Any, current: datetime) -> list[Any]:
+    """Return all currently open, in-scope rows for digest mail.
+
+    The database is scoped at collection time. This second guard keeps closed or
+    expired rows out of the daily/weekly digest while retaining open notices whose
+    source did not provide a deadline.
+    """
+    return [
+        row
+        for row in list_notices(connection)
+        if str(row["review_status"] or "") not in {"not_relevant", "closed"}
+        and is_notice_active(row, current)
+    ]
 
 
 def read_notification_config(path: str | Path) -> dict[str, Any]:
@@ -424,14 +439,14 @@ def _email_payload(
         notification_type = "daily"
         keys = [f"{date_label}-{daily_slot.replace(':', '')}"]
         notice_ids = [None]
-        intro = f"오늘 {daily_slot} 기준으로 지난 일일 발송 이후 확인된 공고는 {len(items)}건입니다."
+        intro = f"오늘 {daily_slot} 기준으로 현재 접수 중인 관련 공고 {len(items)}건을 정리했습니다. Tier 1·2를 먼저 확인하세요."
     elif mode == "weekly":
         week_key = f"{now.isocalendar().year}-W{now.isocalendar().week:02d}"
         subject = f"[INNERGEN Climate Intelligence] 주간 입찰 브리핑 ({week_key})"
         notification_type = "weekly"
         keys = [week_key]
         notice_ids = [None]
-        intro = f"지난 주간 발송 이후 확인된 공고는 {len(items)}건입니다."
+        intro = f"현재 접수 중인 관련 공고 {len(items)}건을 정리했습니다. Tier 1·2를 먼저 확인하세요."
     else:
         raise ValueError(f"Unsupported notification mode: {mode}")
 
@@ -586,16 +601,13 @@ def dispatch_notifications(
             if notification_delivery_sent(connection, mode, key, recipient):
                 results.append(DispatchResult(recipient=recipient, mode=mode, skipped=1, message="이미 발송된 집계 기간입니다."))
                 continue
-            since_at = last_successful_notification_at(connection, mode, recipient) or baseline_at
-            items = [
-                notice_view(row, current)
-                for row in list_notices_since(connection, since_at, min_score=min_score)
-                if _notice_is_not_historical(row, baseline_at)
-            ]
+            # Daily/weekly digests are an operational snapshot: include every
+            # currently active in-scope notice, not only rows first seen since the
+            # previous send. This prevents an open Tier 1/2 bid from disappearing
+            # from the user's morning/evening briefing after its first appearance.
+            items = [notice_view(row, current) for row in _active_notice_rows(connection, current)]
             deadline_alerts = []
-            for row in list_notices(connection):
-                if str(row["review_status"] or "") in {"not_relevant", "closed"}:
-                    continue
+            for row in _active_notice_rows(connection, current):
                 view = notice_view(row, current)
                 if view["deadline_priority"] and view["business_tier"] in {TIER_1, TIER_2}:
                     deadline_alerts.append(view)

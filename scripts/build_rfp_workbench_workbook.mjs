@@ -82,6 +82,21 @@ function text(value) {
 }
 
 
+function prioritizedNotices(notices) {
+  const tierRank = { tier_1: 0, tier_2: 1, tier_3: 2, unclassified: 3 };
+  const deadlineRank = { "D-3": 0, "D-7": 1 };
+  return [...notices].sort((left, right) => {
+    const activeDifference = Number(Boolean(right.is_active)) - Number(Boolean(left.is_active));
+    if (activeDifference) return activeDifference;
+    const tierDifference = (tierRank[text(left.business_tier)] ?? 4) - (tierRank[text(right.business_tier)] ?? 4);
+    if (tierDifference) return tierDifference;
+    const deadlineDifference = (deadlineRank[text(left.deadline_priority)] ?? 2) - (deadlineRank[text(right.deadline_priority)] ?? 2);
+    if (deadlineDifference) return deadlineDifference;
+    return text(left.deadline_at).localeCompare(text(right.deadline_at)) || integer(left.id) - integer(right.id);
+  });
+}
+
+
 function integer(value) {
   if (typeof value === "number" && Number.isFinite(value)) return Math.round(value);
   const normalized = text(value).replaceAll(",", "");
@@ -208,6 +223,7 @@ function noticeRows(notices) {
     return [
       integer(notice.id),
       tierLabel(notice.business_tier),
+      notice.is_active ? "현재 접수 중" : "마감 경과·확인 필요",
       text(notice.tier_reason),
       text(notice.review_status),
       text(notice.title),
@@ -298,6 +314,7 @@ function fitReviewRows(notices) {
     return [
       integer(notice.id),
       tierLabel(notice.business_tier),
+      notice.is_active ? "현재 접수 중" : "마감 경과·확인 필요",
       text(notice.title),
       text(notice.buyer),
       asDate(notice.deadline_at),
@@ -320,15 +337,16 @@ function buildDashboard(sheet, notices, documents) {
   writeHeading(
     sheet,
     "기후·온실가스·배출권거래제 공고 검토 대시보드",
-    "나라장터 4개 유형의 현재 접수 공고 전체를 포함합니다. D-7/D-3는 전체 범위 기준이며 Tier 1·2를 우선 검토하세요.",
+    "나라장터 4개 유형의 관련 공고를 포함합니다. 현재 접수 중 공고와 Tier 1·2를 우선 검토하세요. D-7/D-3는 전체 범위 기준입니다.",
     15,
   );
   const noticeEnd = Math.max(7, notices.length + 6);
   const documentEnd = Math.max(7, documents.length + 6);
-  addCard(sheet, 0, "전체 공고", "=COUNTA('공고목록'!$A$7:$A$" + noticeEnd + ")", COLORS.paleBlue);
-  addCard(sheet, 3, "Tier 1", "=COUNTIFS('공고목록'!$B$7:$B$" + noticeEnd + ",\"Tier 1\")", COLORS.paleGreen);
-  addCard(sheet, 6, "Tier 2", "=COUNTIFS('공고목록'!$B$7:$B$" + noticeEnd + ",\"Tier 2\")", COLORS.paleAmber);
-  addCard(sheet, 9, "Tier 3", "=COUNTIFS('공고목록'!$B$7:$B$" + noticeEnd + ",\"Tier 3\")", COLORS.paleGray);
+  addCard(sheet, 0, "전체 관련 공고", "=COUNTA('공고목록'!$A$7:$A$" + noticeEnd + ")", COLORS.paleBlue);
+  addCard(sheet, 3, "현재 접수 중", "=COUNTIFS('공고목록'!$C$7:$C$" + noticeEnd + ",\"현재 접수 중\")", COLORS.paleBlue);
+  addCard(sheet, 6, "현재 접수 중 Tier 1", "=COUNTIFS('공고목록'!$B$7:$B$" + noticeEnd + ",\"Tier 1\",'공고목록'!$C$7:$C$" + noticeEnd + ",\"현재 접수 중\")", COLORS.paleGreen);
+  addCard(sheet, 9, "현재 접수 중 Tier 2", "=COUNTIFS('공고목록'!$B$7:$B$" + noticeEnd + ",\"Tier 2\",'공고목록'!$C$7:$C$" + noticeEnd + ",\"현재 접수 중\")", COLORS.paleAmber);
+  addCard(sheet, 12, "Tier 3", "=COUNTIFS('공고목록'!$B$7:$B$" + noticeEnd + ",\"Tier 3\")", COLORS.paleGray);
   addCard(sheet, 12, "공개 원문 추출 완료", "=COUNTIFS('문서요약'!$G$7:$G$" + documentEnd + ",\"공개 원문 추출 완료\")", COLORS.paleGreen);
 
   sheet.getRange("A9:A10").values = [["D-7 중요 마감"], ["D-3 중요 마감"]];
@@ -388,27 +406,27 @@ function buildFitReviewSheet(sheet, notices) {
     14,
   );
   const headers = [
-    "공고 ID", "Tier", "공고명", "발주기관", "마감일", "문서 상태",
+    "공고 ID", "Tier", "접수 상태", "공고명", "발주기관", "마감일", "문서 상태",
     "컨설팅 적합성", "필요 자격·등록", "예상 투입인력", "입찰 의견",
     "핵심 위험·확인사항", "검토 메모", "공식 공고 URL", "대표 RFP/과업지시서 URL",
   ];
   const rows = fitReviewRows(notices);
   const end = Math.max(7, rows.length + 6);
-  sheet.getRange("A6:N6").values = [headers];
-  if (rows.length) sheet.getRange("A7:N" + end).values = rows;
-  styleTable(sheet, "A6:N6", "A7:N" + end, "BidFitReviewTable");
-  sheet.getRange("E7:E" + end).setNumberFormat("yyyy-mm-dd hh:mm");
-  sheet.getRange("G7:L" + end).format.fill = COLORS.paleAmber;
-  sheet.getRange("G7:L" + end).format.wrapText = true;
-  sheet.getRange("C7:C" + end).format.wrapText = true;
-  sheet.getRange("A7:N" + end).format.rowHeight = 58;
-  sheet.getRange("G7:G" + end).dataValidation = {
+  sheet.getRange("A6:O6").values = [headers];
+  if (rows.length) sheet.getRange("A7:O" + end).values = rows;
+  styleTable(sheet, "A6:O6", "A7:O" + end, "BidFitReviewTable");
+  sheet.getRange("F7:F" + end).setNumberFormat("yyyy-mm-dd hh:mm");
+  sheet.getRange("H7:M" + end).format.fill = COLORS.paleAmber;
+  sheet.getRange("H7:M" + end).format.wrapText = true;
+  sheet.getRange("D7:D" + end).format.wrapText = true;
+  sheet.getRange("A7:O" + end).format.rowHeight = 58;
+  sheet.getRange("H7:H" + end).dataValidation = {
     rule: { type: "list", values: ["미검토", "높음", "보통", "낮음"] },
   };
-  sheet.getRange("J7:J" + end).dataValidation = {
+  sheet.getRange("K7:K" + end).dataValidation = {
     rule: { type: "list", values: ["미결정", "입찰 검토", "조건부 검토", "미입찰"] },
   };
-  setWidths(sheet, [10, 11, 48, 22, 18, 25, 16, 33, 31, 17, 40, 42, 50, 54]);
+  setWidths(sheet, [10, 11, 18, 48, 22, 18, 25, 16, 33, 31, 17, 40, 42, 50, 54]);
   sheet.freezePanes.freezeRows(6);
   sheet.freezePanes.freezeColumns(3);
 }
@@ -420,35 +438,36 @@ function buildNoticesSheet(sheet, notices) {
     sheet,
     "공고목록",
     "대표 문서만 표시합니다. 복수 문서의 근거와 원문은 문서요약 시트에서 확인하세요.",
-    21,
+    22,
   );
   const headers = [
-    "공고 ID", "Tier", "Tier 판단 근거", "검토상태", "공고명", "발주기관", "출처",
+    "공고 ID", "Tier", "접수 상태", "Tier 판단 근거", "검토상태", "공고명", "발주기관", "출처",
     "공고일", "마감일", "중요 마감", "입찰방식", "공고목록 금액(원)", "공고목록 금액 원문",
     "문서 상태", "과업 간단 요약", "문서 추출 금액(원)", "문서 금액 원문",
     "금액 기준", "공식 공고 URL", "대표 RFP/과업지시서 URL", "검토 메모",
   ];
   const rows = noticeRows(notices);
   const end = Math.max(7, rows.length + 6);
-  sheet.getRange("A6:U6").values = [headers];
-  if (rows.length) sheet.getRange("A7:U" + end).values = rows;
-  styleTable(sheet, "A6:U6", "A7:U" + end, "WorkbenchNoticesTable");
-  sheet.getRange("H7:I" + end).setNumberFormat("yyyy-mm-dd hh:mm");
-  sheet.getRange("L7:L" + end).setNumberFormat("#,##0");
-  sheet.getRange("P7:P" + end).setNumberFormat("#,##0");
-  sheet.getRange("J7:J" + end).format.font = { bold: true, color: "#8A2A26" };
-  sheet.getRange("C7:C" + end).format.wrapText = true;
-  sheet.getRange("E7:E" + end).format.wrapText = true;
-  sheet.getRange("O7:O" + end).format.wrapText = true;
-  sheet.getRange("U7:U" + end).format.wrapText = true;
-  sheet.getRange("A7:U" + end).format.rowHeight = 52;
+  sheet.getRange("A6:V6").values = [headers];
+  if (rows.length) sheet.getRange("A7:V" + end).values = rows;
+  styleTable(sheet, "A6:V6", "A7:V" + end, "WorkbenchNoticesTable");
+  sheet.getRange("I7:J" + end).setNumberFormat("yyyy-mm-dd hh:mm");
+  sheet.getRange("M7:M" + end).setNumberFormat("#,##0");
+  sheet.getRange("Q7:Q" + end).setNumberFormat("#,##0");
+  sheet.getRange("K7:K" + end).format.font = { bold: true, color: "#8A2A26" };
+  sheet.getRange("D7:D" + end).format.wrapText = true;
+  sheet.getRange("F7:F" + end).format.wrapText = true;
+  sheet.getRange("P7:P" + end).format.wrapText = true;
+  sheet.getRange("V7:V" + end).format.wrapText = true;
+  sheet.getRange("A7:V" + end).format.rowHeight = 52;
   notices.forEach((notice, index) => {
     const row = index + 7;
+    sheet.getRange("C" + row).format.fill = notice.is_active ? COLORS.paleGreen : COLORS.paleGray;
     const priority = text(notice.deadline_priority);
     if (priority === "D-7") sheet.getRange("J" + row).format.fill = COLORS.paleAmber;
     if (priority === "D-3") sheet.getRange("J" + row).format.fill = COLORS.paleRed;
   });
-  setWidths(sheet, [10, 11, 28, 14, 52, 22, 24, 18, 18, 15, 18, 18, 22, 24, 58, 18, 18, 16, 48, 48, 28]);
+  setWidths(sheet, [10, 11, 18, 28, 14, 52, 22, 24, 18, 18, 15, 18, 18, 22, 24, 58, 18, 18, 16, 48, 48, 28, 28]);
   sheet.freezePanes.freezeRows(6);
   sheet.freezePanes.freezeColumns(5);
 }
@@ -537,10 +556,10 @@ async function renderPreviews(workbook, previewDir) {
   await fs.mkdir(previewDir, { recursive: true });
   const targets = [
     ["대시보드", "A1:N24", "01_dashboard.png"],
-    ["공고목록", "A1:T14", "02_notices.png"],
+    ["공고목록", "A1:V14", "02_notices.png"],
     ["문서요약", "A1:P14", "03_documents.png"],
     ["출처안내", "A1:D22", "04_sources.png"],
-    ["입찰적합성검토", "A1:N14", "05_bid_fit_review.png"],
+    ["입찰적합성검토", "A1:O14", "05_bid_fit_review.png"],
   ];
   for (const [sheetName, range, fileName] of targets) {
     const preview = await workbook.render({ sheetName, range, scale: 1, format: "png" });
@@ -554,6 +573,7 @@ async function main() {
   const payload = JSON.parse(await fs.readFile(options.input, "utf8"));
   const notices = Array.isArray(payload.notices) ? payload.notices : [];
   const documents = Array.isArray(payload.documents) ? payload.documents : [];
+  const orderedNotices = prioritizedNotices(notices);
 
   const workbook = Workbook.create();
   const dashboard = workbook.worksheets.add("대시보드");
@@ -568,10 +588,10 @@ async function main() {
   fitReviewSheet.tabColor = "#B7791F";
 
   buildDashboard(dashboard, notices, documents);
-  buildNoticesSheet(noticesSheet, notices);
+  buildNoticesSheet(noticesSheet, orderedNotices);
   buildDocumentsSheet(documentsSheet, documents);
   buildSourcesSheet(sourcesSheet, notices, documents);
-  buildFitReviewSheet(fitReviewSheet, notices);
+  buildFitReviewSheet(fitReviewSheet, orderedNotices);
 
   workbook.recalculate();
   const dashboardCheck = await workbook.inspect({
@@ -584,10 +604,10 @@ async function main() {
   console.log(dashboardCheck.ndjson);
   const fitReviewCheck = await workbook.inspect({
     kind: "table",
-    range: "입찰적합성검토!A1:N14",
+    range: "입찰적합성검토!A1:O14",
     include: "values,formulas",
     tableMaxRows: 14,
-    tableMaxCols: 14,
+    tableMaxCols: 15,
   });
   console.log(fitReviewCheck.ndjson);
   const errors = await workbook.inspect({

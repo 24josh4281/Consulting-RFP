@@ -13,7 +13,15 @@ from urllib.parse import urlencode, urljoin, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-from .keyword_matcher import assess_g2b_title, extension_from_url, has_any_term, is_excluded, normalize_text, score_text
+from .keyword_matcher import (
+    assess_g2b_title,
+    extension_from_url,
+    has_any_term,
+    is_climate_related_title,
+    is_excluded,
+    normalize_text,
+    score_text,
+)
 from .models import Attachment, Notice
 
 
@@ -557,10 +565,10 @@ class G2BBidApiFetcher(BaseFetcher):
             title = str(item.get("bidNtceNm") or item.get("bidNm") or item.get("ntceNm") or "").strip()
             if not title:
                 continue
-            if not include_all_notices and is_excluded(title, self.keyword_config):
+            if is_excluded(title, self.keyword_config):
                 continue
             assessment = assess_g2b_title(title, self.keyword_config)
-            if not include_all_notices and assessment.tier == "ignore":
+            if not is_climate_related_title(title, self.keyword_config):
                 continue
             match = assessment.match
 
@@ -578,7 +586,7 @@ class G2BBidApiFetcher(BaseFetcher):
             )
             raw = dict(item)
             raw["_tracker_intake"] = {
-                "rule": "g2b_all_current_v1" if include_all_notices else "g2b_title_policy_v1",
+                "rule": "g2b_all_current_v2_domain_filtered" if include_all_notices else "g2b_title_policy_v1",
                 "tier": assessment.tier,
                 "title_matched_keywords": match.keywords,
                 "strong_keywords": assessment.strong_keywords,

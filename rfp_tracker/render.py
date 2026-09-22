@@ -317,6 +317,9 @@ def render_workbench_dashboard(
         ("전체 공고", summary.get("total_notices", len(notices)), "navy"),
         ("Tier 1", summary.get("tier_1", 0), "green"),
         ("Tier 2", summary.get("tier_2", 0), "amber"),
+        ("현재 접수 중", summary.get("active_notices", 0), "blue"),
+        ("현재 접수 중 Tier 1", summary.get("active_tier_1", 0), "green"),
+        ("현재 접수 중 Tier 2", summary.get("active_tier_2", 0), "amber"),
         ("Tier 3", summary.get("tier_3", 0), "gray"),
         ("D-7 중요 마감", summary.get("deadline_d7", 0), "amber"),
         ("D-3 중요 마감", summary.get("deadline_d3", 0), "red"),
@@ -386,6 +389,7 @@ def render_workbench_dashboard(
             f"""
             <tr class="notice-row"
                 data-tier="{html.escape(tier, quote=True)}"
+                data-active="{'active' if notice.get('is_active') else 'inactive'}"
                 data-review="{html.escape(review_status, quote=True)}"
                 data-source="{html.escape(source_name, quote=True)}"
                 data-document="{html.escape(document_status, quote=True)}"
@@ -516,6 +520,9 @@ def render_workbench_dashboard(
     .review-badge {{ background: #EDF2F7; color: #4A5568; border-color: #D2DCE7; }}
     .status-extracted {{ background: var(--green); color: #205D36; border-color: #9FCBAE; }}
     .status-missing_document_url, .status-download_failed, .status-parse_failed {{ background: var(--red); color: #8A2A26; border-color: #E2AAA5; }}
+    .active-status {{ display: inline-block; padding: 4px 7px; border: 1px solid #BFCBD7; border-radius: 3px; font-size: 12px; font-weight: 700; white-space: nowrap; }}
+    .active-status.active {{ background: var(--green); color: #205D36; border-color: #9FCBAE; }}
+    .active-status.inactive {{ background: #EDF1F5; color: #4A5568; }}
     .status-unsupported_file_type, .status-sample_source, .status-processed_no_evidence, .status-not_attempted {{ background: var(--amber); color: #7B5510; border-color: #E7C66C; }}
     .summary-preview {{ margin-top: 8px; max-width: 390px; }}
     .amount-line {{ margin-top: 6px; font-weight: 700; }}
@@ -556,6 +563,7 @@ def render_workbench_dashboard(
       <div class="filter-grid">
         <div><label for="search">통합 검색</label><input id="search" placeholder="공고명, 기관, 키워드, 과업 요약"></div>
         <div><label for="tier">Tier</label><select id="tier"><option value="">전체</option><option value="tier_1">Tier 1</option><option value="tier_2">Tier 2</option><option value="tier_3">Tier 3</option></select></div>
+        <div><label for="active">접수 상태</label><select id="active"><option value="">전체</option><option value="active">현재 접수 중</option><option value="inactive">마감 경과·확인 필요</option></select></div>
         <div><label for="priority">우선 검토</label><select id="priority"><option value="">전체</option><option value="official_tier_1">Tier 1 공식 우선</option></select></div>
         <div><label for="deadline-priority">중요 마감</label><select id="deadline-priority"><option value="">전체</option><option value="D-7">D-7</option><option value="D-3">D-3</option></select></div>
         <div><label for="review">검토 상태</label><select id="review"><option value="">전체</option>{review_select}</select></div>
@@ -576,11 +584,12 @@ def render_workbench_dashboard(
   </main>
   <script>
     const rows = Array.from(document.querySelectorAll(".notice-row"));
-    const controls = ["search", "tier", "priority", "deadline-priority", "review", "source", "document", "deadline"].map(id => document.getElementById(id));
+    const controls = ["search", "tier", "active", "priority", "deadline-priority", "review", "source", "document", "deadline"].map(id => document.getElementById(id));
     const visibleCount = document.getElementById("visible-count");
     function applyFilters() {{
       const query = document.getElementById("search").value.trim().toLocaleLowerCase();
       const tier = document.getElementById("tier").value;
+      const active = document.getElementById("active").value;
       const priority = document.getElementById("priority").value;
       const deadlinePriority = document.getElementById("deadline-priority").value;
       const review = document.getElementById("review").value;
@@ -591,13 +600,14 @@ def render_workbench_dashboard(
       rows.forEach(row => {{
         const matchesQuery = !query || row.dataset.search.includes(query);
         const matchesTier = !tier || row.dataset.tier === tier;
+        const matchesActive = !active || row.dataset.active === active;
         const matchesPriority = !priority || row.dataset.priority === priority;
         const matchesDeadlinePriority = !deadlinePriority || row.dataset.deadlinePriority === deadlinePriority;
         const matchesReview = !review || row.dataset.review === review;
         const matchesSource = !source || row.dataset.source === source;
         const matchesDocument = !documentStatus || row.dataset.document === documentStatus;
         const matchesDeadline = !deadline || (row.dataset.deadline && row.dataset.deadline <= deadline);
-        const visible = matchesQuery && matchesTier && matchesPriority && matchesDeadlinePriority && matchesReview && matchesSource && matchesDocument && matchesDeadline;
+        const visible = matchesQuery && matchesTier && matchesActive && matchesPriority && matchesDeadlinePriority && matchesReview && matchesSource && matchesDocument && matchesDeadline;
         row.style.display = visible ? "" : "none";
         if (visible) count += 1;
       }});
@@ -632,6 +642,7 @@ def _render_public_workbench_dashboard(payload: dict[str, object], path: Path) -
     )
     cards = [
         ("공개 공식 공고", summary.get("total_notices", len(notices)), "navy"),
+        ("현재 접수 중", summary.get("active_notices", 0), "blue"),
         ("공개 문서 링크", summary.get("public_document_links", 0), "blue"),
         ("공개 원문 추출 완료", summary.get("extracted_documents", 0), "green"),
         ("D-7 중요 마감", summary.get("deadline_d7", 0), "amber"),
@@ -661,8 +672,9 @@ def _render_public_workbench_dashboard(payload: dict[str, object], path: Path) -
         )
         rows.append(
             f"""
-            <tr class="notice-row" data-source="{html.escape(source_name, quote=True)}" data-document="{html.escape(status, quote=True)}" data-deadline-priority="{html.escape(deadline_priority, quote=True)}" data-deadline="{html.escape(deadline[:10], quote=True)}" data-search="{html.escape(search_text, quote=True)}">
+            <tr class="notice-row" data-active="{'active' if notice.get('is_active') else 'inactive'}" data-source="{html.escape(source_name, quote=True)}" data-document="{html.escape(status, quote=True)}" data-deadline-priority="{html.escape(deadline_priority, quote=True)}" data-deadline="{html.escape(deadline[:10], quote=True)}" data-search="{html.escape(search_text, quote=True)}">
               <td class="title">{_external_link(notice.get("url"), notice.get("title"))}<div class="meta">{html.escape(source_name)} · {html.escape(str(notice.get("published_at") or "공고일 미수집"))}</div></td>
+              <td><span class="active-status {'active' if notice.get('is_active') else 'inactive'}" style="display:inline-block;padding:4px 7px;border:1px solid #BFCBD7;border-radius:3px;font-weight:700;font-size:12px;white-space:nowrap;background:{'#E3F2E7' if notice.get('is_active') else '#EDF1F5'};color:{'#205D36' if notice.get('is_active') else '#4A5568'};">{'현재 접수 중' if notice.get('is_active') else '마감 경과·확인 필요'}</span></td>
               <td>{html.escape(str(notice.get("buyer") or ""))}</td>
               <td>{_deadline_priority_badge(deadline_priority)}<div>{html.escape(deadline or "마감일 미수집")}</div></td>
               <td>{_format_krw(notice.get("budget_value_krw"))}<div class="meta">{html.escape(str(notice.get("procurement_method") or ""))}</div></td>
@@ -688,8 +700,8 @@ header {{ background:var(--navy); color:#fff; padding:24px 28px; border:1px soli
 .kpis {{ display:grid; grid-template-columns:repeat(3,minmax(180px,1fr)); gap:12px; margin:18px 0; }} .kpi {{ background:#fff; border:1px solid var(--line); border-top:5px solid var(--navy); padding:15px; }} .kpi.blue {{ border-top-color:#2B6CB0; }} .kpi.green {{ border-top-color:#2B7A4B; }} .kpi span {{ color:var(--muted); font-size:13px; }} .kpi strong {{ display:block; margin-top:10px; color:var(--navy); font-size:29px; }}
 .panel {{ background:#fff; border:1px solid var(--line); padding:18px; }} .filters {{ display:grid; grid-template-columns:minmax(280px,2fr) repeat(3,minmax(150px,1fr)) auto; gap:10px; align-items:end; }} label {{ display:block; margin-bottom:5px; color:#405368; font-weight:700; font-size:12px; }} input,select,button {{ width:100%; min-height:39px; padding:8px 10px; border:1px solid #BFCBD7; border-radius:3px; background:#fff; }} button {{ width:auto; cursor:pointer; background:var(--navy); color:#fff; border-color:var(--navy); font-weight:700; }}
 .note {{ margin:14px 0; padding:12px; border:1px solid #E6CE84; background:#FFF9E8; color:#624B13; line-height:1.55; }} .count {{ color:var(--muted); font-size:13px; }} .table-wrap {{ overflow:auto; border:1px solid var(--line); }} table {{ width:100%; min-width:1200px; border-collapse:collapse; font-size:13px; }} th,td {{ border:1px solid var(--line); padding:11px 10px; vertical-align:top; line-height:1.5; }} th {{ background:var(--teal); color:#fff; text-align:left; }} tr:nth-child(even) td {{ background:#FBFCFE; }} a {{ color:#155A8A; font-weight:700; text-decoration:none; }} a:hover {{ text-decoration:underline; }} .title {{ min-width:290px; }} .meta,.amount span {{ color:var(--muted); font-size:12px; }} .status {{ display:inline-block; padding:4px 7px; border:1px solid #E7C66C; background:var(--amber); color:#7B5510; border-radius:3px; font-weight:700; font-size:12px; }} .status-extracted {{ background:var(--green); border-color:#9FCBAE; color:#205D36; }} .status-missing_document_url,.status-download_failed,.status-parse_failed {{ background:var(--red); border-color:#E2AAA5; color:#8A2A26; }} details summary {{ color:#155A8A; cursor:pointer; font-weight:700; }} .docs {{ margin-top:10px; }} .document-card {{ border:1px solid #D5DEE8; padding:10px; margin-top:8px; }} .document-card p {{ margin:6px 0; }} .document-header {{ display:flex; gap:8px; flex-wrap:wrap; }} .warning {{ color:#8A2A26; }} .muted {{ color:var(--muted); }} @media(max-width:900px) {{ .shell {{ padding:14px; }} .kpis,.filters {{ grid-template-columns:1fr; }} }}
-</style></head><body><main class="shell"><header><p class="eyebrow">PUBLIC PROCUREMENT SNAPSHOT</p><h1>나라장터 현재 접수 공고 · 기후·온실가스 RFP</h1><p>나라장터 용역·물품·공사·외자에서 현재 입찰 접수 중인 전체 공고와 관련 공식 출처를 공개 링크로 연결합니다. D-7/D-3 표시는 전체 수집 범위 기준입니다. 이 페이지는 정적 스냅샷이며, 공고 적합성·자격·입찰 판단은 담당자가 공식 원문에서 확인해야 합니다.</p></header><section class="kpis">{card_html}</section><section class="panel"><div class="filters"><div><label for="search">통합 검색</label><input id="search" placeholder="공고명, 기관, 과업 요약"></div><div><label for="source">출처</label><select id="source"><option value="">전체</option>{source_select}</select></div><div><label for="document">문서 상태</label><select id="document"><option value="">전체</option>{document_select}</select></div><div><label for="deadline">마감일 이전</label><input id="deadline" type="date"></div><button id="reset" type="button">필터 초기화</button></div><p class="count"><strong id="visible-count">{len(notices)}</strong>건 표시 중</p><p class="note">금액은 공고 목록 또는 공개 문서에 표시된 기준 금액입니다. 예산액·소요예산·추정가격·입찰금액·계약금액은 서로 다른 개념이므로, 금액 기준과 VAT 포함 여부를 원문에서 확인하세요.</p><div class="table-wrap"><table><thead><tr><th>공고명 / 출처</th><th>발주기관</th><th>마감</th><th>공고목록 금액 / 방식</th><th>문서·요약</th><th>원문</th></tr></thead><tbody id="notice-rows">{''.join(rows)}</tbody></table></div></section></main><script>
-const rows=Array.from(document.querySelectorAll('.notice-row'));const controls=['search','source','document','deadline'].map(id=>document.getElementById(id));const count=document.getElementById('visible-count');function applyFilters(){{const query=document.getElementById('search').value.trim().toLocaleLowerCase();const source=document.getElementById('source').value;const documentStatus=document.getElementById('document').value;const deadline=document.getElementById('deadline').value;let visibleCount=0;rows.forEach(row=>{{const visible=(!query||row.dataset.search.includes(query))&&(!source||row.dataset.source===source)&&(!documentStatus||row.dataset.document===documentStatus)&&(!deadline||(row.dataset.deadline&&row.dataset.deadline<=deadline));row.style.display=visible?'':'none';if(visible)visibleCount+=1;}});count.textContent=String(visibleCount);}}controls.forEach(control=>control.addEventListener('input',applyFilters));document.getElementById('reset').addEventListener('click',()=>{{controls.forEach(control=>{{control.value='';}});applyFilters();}});
+</style></head><body><main class="shell"><header><p class="eyebrow">PUBLIC PROCUREMENT SNAPSHOT</p><h1>나라장터 현재 접수 공고 · 기후·온실가스 RFP</h1><p>나라장터 용역·물품·공사·외자에서 현재 입찰 접수 중인 전체 공고와 관련 공식 출처를 공개 링크로 연결합니다. D-7/D-3 표시는 전체 수집 범위 기준입니다. 이 페이지는 정적 스냅샷이며, 공고 적합성·자격·입찰 판단은 담당자가 공식 원문에서 확인해야 합니다.</p></header><section class="kpis">{card_html}</section><section class="panel"><div class="filters"><div><label for="search">통합 검색</label><input id="search" placeholder="공고명, 기관, 과업 요약"></div><div><label for="active">접수 상태</label><select id="active"><option value="">전체</option><option value="active">현재 접수 중</option><option value="inactive">마감 경과·확인 필요</option></select></div><div><label for="source">출처</label><select id="source"><option value="">전체</option>{source_select}</select></div><div><label for="document">문서 상태</label><select id="document"><option value="">전체</option>{document_select}</select></div><div><label for="deadline">마감일 이전</label><input id="deadline" type="date"></div><button id="reset" type="button">필터 초기화</button></div><p class="count"><strong id="visible-count">{len(notices)}</strong>건 표시 중</p><p class="note">금액은 공고 목록 또는 공개 문서에 표시된 기준 금액입니다. 예산액·소요예산·추정가격·입찰금액·계약금액은 서로 다른 개념이므로, 금액 기준과 VAT 포함 여부를 원문에서 확인하세요.</p><div class="table-wrap"><table><thead><tr><th>공고명 / 출처</th><th>접수 상태</th><th>발주기관</th><th>마감</th><th>공고목록 금액 / 방식</th><th>문서·요약</th><th>원문</th></tr></thead><tbody id="notice-rows">{''.join(rows)}</tbody></table></div></section></main><script>
+const rows=Array.from(document.querySelectorAll('.notice-row'));const controls=['search','active','source','document','deadline'].map(id=>document.getElementById(id));const count=document.getElementById('visible-count');function applyFilters(){{const query=document.getElementById('search').value.trim().toLocaleLowerCase();const active=document.getElementById('active').value;const source=document.getElementById('source').value;const documentStatus=document.getElementById('document').value;const deadline=document.getElementById('deadline').value;let visibleCount=0;rows.forEach(row=>{{const visible=(!query||row.dataset.search.includes(query))&&(!active||row.dataset.active===active)&&(!source||row.dataset.source===source)&&(!documentStatus||row.dataset.document===documentStatus)&&(!deadline||(row.dataset.deadline&&row.dataset.deadline<=deadline));row.style.display=visible?'':'none';if(visible)visibleCount+=1;}});count.textContent=String(visibleCount);}}controls.forEach(control=>control.addEventListener('input',applyFilters));document.getElementById('reset').addEventListener('click',()=>{{controls.forEach(control=>{{control.value='';}});applyFilters();}});
 </script></body></html>"""
     page = page.replace(
         '<div><label for="deadline">마감일 이전</label>',

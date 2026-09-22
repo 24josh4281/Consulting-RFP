@@ -4,7 +4,7 @@
 
 현재 버전은 “안전한 1차 자동화”에 집중합니다.
 
-- 나라장터 용역·물품·공사·외자 입찰의 현재 접수 중인 전체 공고 수집
+- 나라장터 용역·물품·공사·외자 입찰 중 기후·온실가스·배출권·환경 관련 현재 접수 공고 수집
 - 온실가스종합정보센터(GIR) 공개 입찰 게시판의 상세 공고·RFP 링크 연결
 - 민간 대기업/계열사 입찰 페이지용 범용 HTML 수집기
 - 기후·GHG·ETS·ESG 키워드 기반 관련성 점수화
@@ -102,9 +102,9 @@ python -m rfp_tracker source-toggle --source-id g2b_service_bids --enable --out 
 
 수집 범위와 운영 방식:
 
-- 용역·물품·공사·외자 4개 공식 검색 API에서 최근 공고를 반복 수집하고, 별도 일일 조회는 공고명 키워드 제한 없이 현재 접수 중인 전체 공고를 저장합니다.
+- 용역·물품·공사·외자 4개 공식 검색 API에서 최근 공고를 반복 수집하고, 별도 일일 조회는 공고명 키워드 제한 없이 현재 접수 중 후보를 확인한 뒤 기후·온실가스·배출권·환경 도메인 신호가 있는 공고만 저장합니다. 교복·학생복·일반 의류·청소·경비 등 비관련 공고는 저장하지 않습니다.
 - 전체 조회는 최근 90일을 API 허용 범위인 최대 30일 구간으로 나눠 조회하고, `totalCount`에 맞춰 페이지를 끝까지 읽습니다. 입찰 시작 전 공고와 마감이 지난 공고는 제외합니다.
-- 일일 전체 조회는 최대 500 API 요청, 구간별 최대 100페이지로 안전 제한합니다. 최근 30일 조회의 4개 유형 합산 API 응답은 약 8,756건이었으며, 이 중 입찰 시작 전 공고는 실제 수집에서 제외됩니다. 전체 후보는 Tier 1·2·3으로 자동 분류하고 입찰 판단은 담당자가 확인해야 합니다.
+- 일일 전체 조회는 최대 500 API 요청, 구간별 최대 100페이지로 안전 제한합니다. 후보 중 입찰 시작 전·마감 후 공고는 제외하고, 도메인 필터를 통과한 공고만 DB에 남깁니다. 저장된 공고는 Tier 1·2·3으로 자동 분류하고 입찰 판단은 담당자가 확인해야 합니다.
 - 과업지시서 자동 다운로드·요약은 Tier 1·2에만 실행하며 Tier 3는 공식 공고·첨부 원문 링크로 확인합니다.
 - 서비스키를 코드 파일에 직접 저장하지 마세요.
 - 공고 원문/RFP/과업지시서 첨부파일은 출처별로 직접 공개된 링크만 연결·검증합니다.
@@ -233,7 +233,7 @@ python -m rfp_tracker export-workbench-json --db data\rfp_tracker_official.db --
 node .\scripts\build_rfp_workbench_workbook.mjs --input outputs\rfp_workbench_data.json --output outputs\rfp_workbench.xlsx
 ~~~
 
-The workbench begins with an official-source-only Tier 1 priority area; sample records remain in the full list but are not treated as real opportunities. Notices exactly 7 or 3 calendar days from their deadline receive D-7/D-3 priority labels in the dashboards, email briefing and Excel export. The workbook contains five sheets: Dashboard, Notices, Document Summary, Sources, and Bid Fit Review. Its yellow input columns provide a bordered review grid for consulting fit, qualifications, proposed team, bid decision, risks, and reviewer notes. It stores the listing amount and document-derived amount in separate fields with the source basis and evidence excerpt.
+The workbench begins with an official-source-only Tier 1 priority area; sample records remain in the full list but are not treated as real opportunities. The dashboard, Excel export, and daily/weekly digest expose every currently active in-scope notice, with Tier 1 and Tier 2 shown first. Notices exactly 7 or 3 calendar days from their deadline receive D-7/D-3 priority labels in the dashboards, email briefing and Excel export. The workbook contains five sheets: Dashboard, Notices, Document Summary, Sources, and Bid Fit Review. Its yellow input columns provide a bordered review grid for consulting fit, qualifications, proposed team, bid decision, risks, and reviewer notes. It stores the listing amount and document-derived amount in separate fields with the source basis and evidence excerpt.
 
 Use the local command below when a reviewed decision should also appear in the internal dashboard. It changes only the separate bid-fit review record, never the source notice, attachment, or document evidence.
 
@@ -278,7 +278,7 @@ python -m rfp_tracker sources --config configs\sources.local.json
 ```
 
 - **온실가스종합정보센터(GIR) 입찰공고**: 공개 상세 화면에서 공고일·전자입찰 여부·공개 첨부 링크를 수집합니다. 실제 제한 검증에서 기후/ETS 공고 2건과 제안요청서·입찰공고문·긴급입찰사유서 링크 총 6건을 확인했습니다. 직접 공개 HWPX는 cache에 저장해 과업 요약과 금액 근거를 추출할 수 있습니다.
-- **나라장터 입찰공고 API**: 용역·물품·공사·외자 4개 공식 API를 통해 최근 공고 및 현재 입찰 접수 중인 전체 공고를 수집합니다. 전체 조회는 공고명 키워드로 제한하지 않고, 기후·환경 키워드와 이너젠 적합도 기준으로 Tier를 보조 분류합니다. 공공데이터포털 서비스키가 있어야 실제 수집됩니다.
+- **나라장터 입찰공고 API**: 용역·물품·공사·외자 4개 공식 API를 통해 최근 공고 및 현재 입찰 접수 중 후보를 확인합니다. 전체 조회는 공고명 키워드로 제한하지 않지만, 저장 단계에서 기후·온실가스·배출권·환경 도메인 신호와 제외어를 적용합니다. 공공데이터포털 서비스키가 있어야 실제 수집됩니다.
 - **나라장터 발주계획·사전규격·계약과정**: 조기 신호와 공고-낙찰-계약 연결을 위한 우선 출처로 카탈로그화했습니다. 전용 어댑터는 다음 단계입니다.
 - **환경부 계약·입찰 게시판**: 공식 후보로 등록했지만, 목록 구조와 이용 정책을 별도로 확인하기 전에는 비활성화 상태입니다.
 - **민간 대기업 포털**: 로그인·협력사 권한·약관 확인이 필요한 경우가 많아 기본 비활성화 상태를 유지합니다.
@@ -323,7 +323,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install_notification_tasks.ps
 
 등록되는 기본 일정은 신규 공고 확인 **30분마다**, 일일 브리핑 **매일 10:00·17:00 (KST)**, 주간 브리핑 **매주 금요일 18:00 (KST)** 입니다. 10시와 17시 브리핑은 각각 별도 발송 기록을 사용하므로, 같은 날에도 한 번씩 안전하게 발송됩니다. "즉시" 알림은 웹훅이 아니라 30분 폴링 기준이므로, 실제 반영 지연은 출처 게시 시간과 다음 폴링 시점에 따라 달라집니다.
 
-즉시 알림은 **Tier 1**만 전송합니다. 일일·주간 메일은 `INNERGEN CLIMATE INTELLIGENCE` 형식의 뉴스레터로 발송되며, Tier 1(직접 컨설팅), Tier 2(고객사 추천), Tier 3(참고)을 각각 테두리 있는 표와 분류 근거·RFP/첨부·원문 링크로 나눠 보여 줍니다.
+즉시 알림은 **Tier 1**만 전송합니다. 일일·주간 메일은 `INNERGEN CLIMATE INTELLIGENCE` 형식의 뉴스레터로 발송되며, 그 시점에 접수 중인 모든 관련 공고를 Tier 1(직접 컨설팅), Tier 2(고객사 추천), Tier 3(참고) 순서의 테두리 있는 표와 분류 근거·RFP/첨부·원문 링크로 보여 줍니다.
 
 Codex의 30분 자동 확인과 Windows 작업 스케줄러는 **둘 중 하나만** 운영합니다. 둘 다 켜면 메일은 중복 방지되지만 API·출처 확인이 중복될 수 있습니다. 이 작업공간은 Codex 자동 확인(`rfp-30`)을 사용하는 상태이므로, 별도 Windows 작업 등록은 Codex를 사용하지 않을 때만 진행하세요.
 

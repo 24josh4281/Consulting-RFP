@@ -185,6 +185,21 @@ def assess_g2b_title(title: str, keyword_config: dict) -> G2BTitleAssessment:
     return G2BTitleAssessment("needs_review", match, domain_hits)
 
 
+def is_climate_related_title(title: str, keyword_config: dict) -> bool:
+    """Return whether a title belongs in the climate/environment tracker.
+
+    The all-current G2B reconciliation intentionally starts from an unfiltered
+    official result set.  This gate keeps the database scoped to the requested
+    climate, GHG, ETS, and environmental domain before Tier classification.
+    Exclusion terms always win, so items such as cleaning, school uniforms, or
+    ordinary facility purchasing do not enter merely because they contain a
+    broad word such as ``환경``.
+    """
+    if is_excluded(title, keyword_config):
+        return False
+    return assess_g2b_title(title, keyword_config).tier != "ignore"
+
+
 def extension_from_url(url: str) -> str:
     """Find a supported document extension in a URL or a human-facing link label.
 
