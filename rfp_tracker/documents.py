@@ -18,6 +18,7 @@ from .fetchers import extract_g2b_spec_attachments
 from .briefing import deadline_priority_label, is_notice_active, parse_notice_datetime, seoul_now
 from .keyword_matcher import extension_from_url, normalize_text
 from .storage import list_workbench_notices, upsert_attachments_for_notice, upsert_document_insight
+from .tiering import is_dashboard_related_notice
 
 
 DOCUMENT_KIND_LABELS = {
@@ -787,13 +788,18 @@ def _listing_budget_to_krw(value: object) -> int | None:
     return int(text) if text.isdigit() else None
 
 
-def build_workbench_payload(connection: sqlite3.Connection) -> dict[str, object]:
-    """Build the Tier 1/2 working set without deleting historical source rows."""
+def build_workbench_payload(
+    connection: sqlite3.Connection, *, include_related_tier3: bool = False
+) -> dict[str, object]:
+    """Build a working set; optional related Tier 3 is for dashboards only."""
     notices: list[dict[str, object]] = []
     current = seoul_now()
     current_date = current.date()
     for row in list_workbench_notices(connection):
-        if str(row["business_tier"] or "") not in {"tier_1", "tier_2"}:
+        tier = str(row["business_tier"] or "")
+        if tier not in {"tier_1", "tier_2"} and not (
+            include_related_tier3 and is_dashboard_related_notice(str(row["title"] or ""), tier)
+        ):
             continue
         if _is_sample_notice(str(row["source_id"] or ""), str(row["url"] or "")):
             continue
@@ -940,12 +946,14 @@ def build_workbench_payload(connection: sqlite3.Connection) -> dict[str, object]
         "active_notices": sum(1 for item in notices if item["is_active"]),
         "active_tier_1": sum(1 for item in notices if item["is_active"] and item["business_tier"] == "tier_1"),
         "active_tier_2": sum(1 for item in notices if item["is_active"] and item["business_tier"] == "tier_2"),
+        "active_tier_3": sum(1 for item in notices if item["is_active"] and item["business_tier"] == "tier_3"),
         "new_today": sum(1 for item in notices if item["is_new_today"]),
         "new_active_today": sum(1 for item in notices if item["is_new_today"] and item["is_active"]),
         "new_tier_1_today": sum(1 for item in notices if item["is_new_today"] and item["business_tier"] == "tier_1"),
         "new_tier_2_today": sum(1 for item in notices if item["is_new_today"] and item["business_tier"] == "tier_2"),
         "tier_1": sum(1 for item in notices if item["business_tier"] == "tier_1"),
         "tier_2": sum(1 for item in notices if item["business_tier"] == "tier_2"),
+        "tier_3": sum(1 for item in notices if item["business_tier"] == "tier_3"),
         "extracted_documents": sum(
             1 for item in documents if item["extraction_status"] == "extracted"
         ),
@@ -976,10 +984,10 @@ def build_public_workbench_payload(connection: sqlite3.Connection) -> dict[str, 
     """Return an explicit public-only projection for a static dashboard.
 
     The public site receives source facts and source-backed document evidence only.
-    Only the public Tier 1/2 label is disclosed. Human review state, classification
+    Only the public Tier label is disclosed. Human review state, classification
     reasons, fit-review notes, local cache paths, and sample records are excluded.
     """
-    internal = build_workbench_payload(connection)
+    internal = build_workbench_payload(connection, include_related_tier3=True)
     public_notices: list[dict[str, object]] = []
     for notice in list(internal["notices"]):
         source_id = str(notice.get("source_id") or "")
@@ -1081,6 +1089,7 @@ def build_public_workbench_payload(connection: sqlite3.Connection) -> dict[str, 
         "active_notices": sum(1 for item in public_notices if item["is_active"]),
         "active_tier_1": sum(1 for item in public_notices if item["is_active"] and item["business_tier"] == "tier_1"),
         "active_tier_2": sum(1 for item in public_notices if item["is_active"] and item["business_tier"] == "tier_2"),
+        "active_tier_3": sum(1 for item in public_notices if item["is_active"] and item["business_tier"] == "tier_3"),
         "new_today": sum(1 for item in public_notices if item["is_new_today"]),
         "new_tier_1_today": sum(1 for item in public_notices if item["is_new_tier_1"]),
         "new_active_today": sum(1 for item in public_notices if item["is_new_today"] and item["is_active"]),

@@ -16,7 +16,7 @@ from rfp_tracker.keyword_matcher import assess_g2b_title, extension_from_url, is
 from rfp_tracker.models import Attachment, Notice
 from rfp_tracker.notifications import dispatch_notifications, read_notification_config
 from rfp_tracker.storage import connect, list_notices, update_notice_review, update_notice_tier, upsert_notice
-from rfp_tracker.tiering import TIER_1, TIER_2, TIER_3, assess_innergen_tier
+from rfp_tracker.tiering import TIER_1, TIER_2, TIER_3, assess_innergen_tier, is_dashboard_related_notice
 
 
 KEYWORDS = {
@@ -164,13 +164,18 @@ class KeywordMatcherTests(unittest.TestCase):
         self.assertEqual(assessment.tier, "strong")
         self.assertIn("대기배출", assessment.strong_keywords)
 
-    def test_g2b_intake_only_accepts_innergen_scope(self):
+    def test_g2b_intake_accepts_related_tier_three_but_not_generic_environment(self):
         from rfp_tracker.keyword_matcher import is_climate_related_title
 
         self.assertTrue(is_climate_related_title("RE100 PPA 조달 전략 수립", PROJECT_KEYWORDS))
         self.assertTrue(is_climate_related_title("탄소중립 설비투자 지원사업", PROJECT_KEYWORDS))
+        self.assertTrue(is_climate_related_title("온실가스 배출계수 개발시험 지원 용역", PROJECT_KEYWORDS))
+        self.assertTrue(is_climate_related_title("기후변화 대응 영상 제작", PROJECT_KEYWORDS))
         self.assertFalse(is_climate_related_title("친환경 교통체계 구축사업 관련 연수", PROJECT_KEYWORDS))
         self.assertFalse(is_climate_related_title("생활환경 개선공사", PROJECT_KEYWORDS))
+        self.assertFalse(is_climate_related_title("기후부 조직문화 진단", PROJECT_KEYWORDS))
+        self.assertTrue(is_dashboard_related_notice("온실가스 배출계수 개발시험", TIER_3))
+        self.assertFalse(is_dashboard_related_notice("생활환경 개선공사", TIER_3))
 
 
 class StorageReviewTests(unittest.TestCase):
@@ -627,6 +632,55 @@ class OfficialBoardFetcherTests(unittest.TestCase):
 
 
 class NotificationTests(unittest.TestCase):
+    def test_pilot_sends_current_digest_without_using_daily_slot(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            connection = connect(Path(tmp_dir) / "tracker.db")
+            now = datetime(2026, 9, 23, 15, 0, tzinfo=ZoneInfo("Asia/Seoul"))
+            dispatch_notifications(
+                connection,
+                recipients=["alerts@example.com"],
+                mode="immediate",
+                now=now - timedelta(days=1),
+            )
+            upsert_notice(
+                connection,
+                Notice(
+                    source_id="g2b_service_bids",
+                    source_name="나라장터",
+                    external_id="pilot-tier-one",
+                    title="온실가스 감축량 평가 컨설팅 용역",
+                    url="https://example.com/pilot",
+                    relevance_score=6,
+                    business_tier=TIER_1,
+                ),
+            )
+            captured = []
+            pilot = dispatch_notifications(
+                connection,
+                recipients=["alerts@example.com"],
+                mode="pilot",
+                send=True,
+                sender=lambda _recipient, payload: captured.append(payload),
+                now=now,
+            )
+            self.assertEqual(pilot[0].sent, 1)
+            self.assertEqual(captured[0].notification_type, "pilot")
+            self.assertTrue(captured[0].subject.startswith("[파일럿]"))
+            self.assertIn("온실가스 감축량 평가 컨설팅 용역", captured[0].html)
+            self.assertIn("정규 브리핑 발송 기록과는 별개", captured[0].html)
+            daily = dispatch_notifications(
+                connection,
+                recipients=["alerts@example.com"],
+                mode="daily",
+                daily_slot="17:00",
+                send=True,
+                sender=lambda _recipient, payload: captured.append(payload),
+                now=now + timedelta(hours=2),
+            )
+            self.assertEqual(daily[0].sent, 1)
+            self.assertEqual(len(captured), 2)
+            connection.close()
+
     def test_daily_email_sends_each_configured_slot_once(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             connection = connect(Path(tmp_dir) / "tracker.db")

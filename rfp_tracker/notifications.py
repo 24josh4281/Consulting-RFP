@@ -671,7 +671,7 @@ def dispatch_notifications(
         if len(daily_slots) != 1:
             raise ValueError("daily_slot must be one time in HH:MM format for a daily briefing.")
         normalized_daily_slot = daily_slots[0]
-    if mode == "test":
+    if mode in {"test", "pilot"}:
         baseline_at = get_notification_setting(connection, BASELINE_SETTING) or ""
         baseline_initialized = False
     else:
@@ -691,6 +691,36 @@ def dispatch_notifications(
     for recipient in recipients:
         if mode == "test":
             payload = _test_payload(current)
+        elif mode == "pilot":
+            active_items = [notice_view(row, current) for row in _active_notice_rows(connection, current)]
+            items = [item for item in active_items if item["business_tier"] in {TIER_1, TIER_2}]
+            digest = _email_payload(
+                "daily",
+                items,
+                current,
+                daily_slot=current.strftime("%H:%M"),
+                dashboard_url=dashboard_url,
+            )
+            pilot_subject = f"[파일럿] {digest.subject}"
+            pilot_note = "파일럿 확인용 메일입니다. 10시·17시 정규 브리핑 발송 기록과는 별개입니다."
+            pilot_banner = (
+                '<div style="padding:10px 16px;background:#E8F3EF;color:#174B43;'
+                'font-weight:700;text-align:center;">' + pilot_note + "</div>"
+            )
+            payload = EmailPayload(
+                "pilot",
+                [current.strftime("%Y%m%dT%H%M%S%f%z")],
+                [None],
+                pilot_subject,
+                digest.text.replace(digest.subject, pilot_subject, 1) + "\n\n" + pilot_note,
+                re.sub(
+                    r"(<body\b[^>]*>)",
+                    lambda match: match.group(1) + pilot_banner,
+                    digest.html,
+                    count=1,
+                    flags=re.IGNORECASE,
+                ),
+            )
         elif mode == "immediate":
             items = [
                 notice_view(row, current)
@@ -729,7 +759,7 @@ def dispatch_notifications(
                 dashboard_url=dashboard_url,
             )
         else:
-            raise ValueError("mode must be immediate, daily, weekly, or test")
+            raise ValueError("mode must be immediate, daily, weekly, pilot, or test")
 
         if payload is None:
             results.append(DispatchResult(recipient=recipient, mode=mode, message="새로 알릴 공고가 없습니다."))

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 """Conservative, title-led fit assessment for Innergen's climate workflow.
 
-Tier 3 remains an internal exclusion value so historical source rows and manual
-decisions can be preserved. Only Tier 1/2 are reader-facing opportunities.
+Tier 3 is a dashboard-only reference category for climate-related notices that
+are not direct consulting or customer grant opportunities. Mail stays Tier 1/2.
 """
 
 import re
@@ -21,14 +21,14 @@ VISIBLE_BUSINESS_TIERS = frozenset({TIER_1, TIER_2})
 TIER_LABELS = {
     TIER_1: "Tier 1 · 이너젠 직접 컨설팅 검토",
     TIER_2: "Tier 2 · 고객사 설비·금융지원 추천",
-    TIER_3: "제외 · 업무범위 밖",
+    TIER_3: "Tier 3 · 기후 관련 참고 공고",
     UNCLASSIFIED: "미분류 · 원문 확인 필요",
 }
 
 TIER_SHORT_LABELS = {
     TIER_1: "Tier 1",
     TIER_2: "Tier 2",
-    TIER_3: "제외",
+    TIER_3: "Tier 3",
     UNCLASSIFIED: "미분류",
 }
 
@@ -110,6 +110,16 @@ GOODS_PROCUREMENT = (
 )
 PRIVATE_BUYER = ("주식회사", "유한회사", "(주)", "㈜", "co., ltd", "corp.")
 
+# Title evidence only: a buyer named after an environment ministry, or a generic
+# "환경" facility repair, is not enough to enter the related-notice dashboard.
+DASHBOARD_CLIMATE_TERMS = (
+    "온실가스", "배출권", "외부사업", "탄소중립", "탄소배출", "탄소감축",
+    "탄소 감축", "저탄소", "탈탄소", "국제감축", "국제 감축",
+    "재생에너지", "신재생에너지", "기후변화영향평가", "ghg", "ets",
+    "re100", "k-re100", "scope 1", "scope 2", "scope 3", "scope1",
+    "scope2", "scope3", "cbam", "csrd", "itmo", "mrv", "ppa", "vppa",
+)
+
 
 def tier_label(tier: str) -> str:
     return TIER_LABELS.get(tier, TIER_LABELS[UNCLASSIFIED])
@@ -117,6 +127,19 @@ def tier_label(tier: str) -> str:
 
 def tier_short_label(tier: str) -> str:
     return TIER_SHORT_LABELS.get(tier, TIER_SHORT_LABELS[UNCLASSIFIED])
+
+
+def is_dashboard_related_notice(title: str, tier: str) -> bool:
+    """Keep Tier 1/2 and only topic-related Tier 3 on dashboards/intake."""
+    if tier in VISIBLE_BUSINESS_TIERS:
+        return True
+    if tier != TIER_3:
+        return False
+    text = " ".join((title or "").casefold().split())
+    return bool(
+        _signals(text, DASHBOARD_CLIMATE_TERMS)
+        or re.search(r"기후(?!부)", text)
+    )
 
 
 def _signals(text: str, terms: Iterable[str]) -> tuple[str, ...]:

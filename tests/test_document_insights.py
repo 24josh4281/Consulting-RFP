@@ -36,17 +36,18 @@ class DocumentInsightTests(unittest.TestCase):
             root = Path(tmp_dir)
             connection = connect(root / "tracker.db")
             deadline = (seoul_now() + timedelta(days=3)).isoformat(timespec="seconds")
-            for tier, title in (
-                ("tier_1", "신규 Scope 3 산정 컨설팅"),
-                ("tier_2", "신규 온실가스 설비 지원"),
-                ("tier_3", "신규 기후 영상 제작"),
+            for external_id, tier, title in (
+                ("tier-1", "tier_1", "신규 Scope 3 산정 컨설팅"),
+                ("tier-2", "tier_2", "신규 온실가스 설비 지원"),
+                ("tier-3-related", "tier_3", "신규 기후 영상 제작"),
+                ("tier-3-unrelated", "tier_3", "생활환경 개선공사"),
             ):
                 upsert_notice(
                     connection,
                     Notice(
                         source_id="official_board",
                         source_name="공식 공고",
-                        external_id=tier,
+                        external_id=external_id,
                         title=title,
                         url=f"https://official.example/{tier}",
                         deadline_at=deadline,
@@ -61,12 +62,15 @@ class DocumentInsightTests(unittest.TestCase):
             featured = rendered.split('<ul class="lead-list">', 1)[1].split("</ul>", 1)[0]
 
             self.assertEqual(public["summary"]["new_tier_1_today"], 1)
-            self.assertEqual(public["summary"]["total_notices"], 2)
+            self.assertEqual(public["summary"]["total_notices"], 3)
+            self.assertEqual(public["summary"]["active_tier_3"], 1)
             self.assertIn("신규 Scope 3 산정 컨설팅", featured)
             self.assertNotIn("신규 온실가스 설비 지원", featured)
             self.assertNotIn("신규 기후 영상 제작", featured)
             self.assertIn("신규 온실가스 설비 지원", rendered)
-            self.assertNotIn("신규 기후 영상 제작", rendered)
+            self.assertIn("신규 기후 영상 제작", rendered)
+            self.assertIn('value="tier_3"', rendered)
+            self.assertNotIn("생활환경 개선공사", rendered)
             self.assertNotIn("INTERNAL-TIER-REASON", rendered)
             self.assertIn('id="tier"', rendered)
             self.assertIn('id="result-count"', rendered)

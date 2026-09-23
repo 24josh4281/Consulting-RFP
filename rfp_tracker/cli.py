@@ -65,7 +65,7 @@ from .storage import (
     upsert_bid_fit_review,
     upsert_notice,
 )
-from .tiering import VALID_BUSINESS_TIERS, VISIBLE_BUSINESS_TIERS, assess_innergen_tier, tier_label
+from .tiering import VALID_BUSINESS_TIERS, VISIBLE_BUSINESS_TIERS, assess_innergen_tier, is_dashboard_related_notice, tier_label
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -143,7 +143,7 @@ def reconcile_open_g2b_command(args: argparse.Namespace) -> int:
                     buyer=notice.buyer,
                     procurement_method=notice.procurement_method,
                 )
-                if assessment.tier not in VISIBLE_BUSINESS_TIERS:
+                if not is_dashboard_related_notice(notice.title, assessment.tier):
                     continue
                 notice.business_tier = assessment.tier
                 notice.tier_reason = assessment.reason
@@ -206,7 +206,7 @@ def sync_command(args: argparse.Namespace) -> int:
                     buyer=notice.buyer,
                     procurement_method=notice.procurement_method,
                 )
-                if assessment.tier not in VISIBLE_BUSINESS_TIERS:
+                if not is_dashboard_related_notice(notice.title, assessment.tier):
                     continue
                 accepted_notices.append(notice)
                 notice.business_tier = assessment.tier
@@ -230,7 +230,7 @@ def sync_command(args: argparse.Namespace) -> int:
 
 def render_command(args: argparse.Namespace) -> int:
     connection = connect(args.db)
-    payload = build_workbench_payload(connection)
+    payload = build_workbench_payload(connection, include_related_tier3=True)
     render_workbench_dashboard(payload, args.out)
     print(f"[done] 공고 작업대 생성: {args.out} ({len(payload['notices'])}건)")
     return 0
@@ -275,7 +275,10 @@ def backfill_g2b_attachments_command(args: argparse.Namespace) -> int:
 
 def render_workbench_command(args: argparse.Namespace) -> int:
     connection = connect(args.db)
-    payload = build_public_workbench_payload(connection) if args.public else build_workbench_payload(connection)
+    payload = (
+        build_public_workbench_payload(connection)
+        if args.public else build_workbench_payload(connection, include_related_tier3=True)
+    )
     render_workbench_dashboard(payload, args.out, public=args.public)
     scope = "공개용 공고 작업대" if args.public else "공고 작업대"
     print(f"[done] {scope} 생성: {args.out} ({len(payload['notices'])}건)")
@@ -1055,11 +1058,11 @@ def build_parser() -> argparse.ArgumentParser:
     notifications_setup.add_argument("--overwrite", action="store_true")
     notifications_setup.set_defaults(func=notifications_setup_command)
 
-    notifications_dispatch = notification_commands.add_parser("dispatch", help="Preview or send immediate/daily/weekly emails")
+    notifications_dispatch = notification_commands.add_parser("dispatch", help="Preview or send immediate/daily/weekly/pilot emails")
     notifications_dispatch.add_argument("--db", default=str(ROOT_DIR / "data" / "rfp_tracker.db"))
     notifications_dispatch.add_argument("--config", default=str(DEFAULT_NOTIFICATION_CONFIG))
     notifications_dispatch.add_argument("--recipient", action="append")
-    notifications_dispatch.add_argument("--mode", choices=["immediate", "daily", "weekly", "test"], required=True)
+    notifications_dispatch.add_argument("--mode", choices=["immediate", "daily", "weekly", "pilot", "test"], required=True)
     notifications_dispatch.add_argument(
         "--daily-slot",
         help="Configured daily briefing slot in HH:MM format, for example 10:00.",

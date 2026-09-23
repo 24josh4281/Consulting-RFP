@@ -16,9 +16,9 @@ a { color:#0a5c69; } a:hover { text-decoration:underline; }
 .hero h1 { max-width:760px; margin:9px 0 8px; font-size:clamp(25px,3vw,36px); line-height:1.23; }
 .hero p { max-width:830px; margin:0; color:#e1f1eb; }
 .hero-meta { display:flex; flex-wrap:wrap; gap:8px 20px; margin-top:17px; font-size:12px; color:#d2e8e1; }
-.kpis { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin:16px 0; }
+.kpis { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:12px; margin:16px 0; }
 .kpi { display:flex; flex-direction:column; min-height:118px; padding:16px 20px; background:#fff; border:1px solid var(--line); border-left:5px solid var(--accent); border-radius:12px; color:var(--ink); text-decoration:none; }
-.kpi.focus { border-left-color:#176d63; } .kpi.support { border-left-color:#a06a1d; } .kpi.urgent { border-left-color:#ac5c24; }
+.kpi.focus { border-left-color:#176d63; } .kpi.support { border-left-color:#a06a1d; } .kpi.reference { border-left-color:#64748b; } .kpi.urgent { border-left-color:#ac5c24; }
 .kpi span { font-size:13px; font-weight:700; color:#35545a; }
 .kpi strong { font-size:30px; line-height:1.2; margin-top:3px; font-variant-numeric:tabular-nums; }
 .kpi small { color:#0b6257; margin-top:auto; font-weight:700; }
@@ -52,7 +52,7 @@ tr:nth-child(even) td { background:#fbfdfc; } tr:hover td { background:#f2f8f6; 
 tr[hidden], [hidden] { display:none !important; }
 .notice-title { font-size:14px; font-weight:750; line-height:1.45; } .notice-title a { color:#143d46; text-decoration:none; } .notice-title a:hover { text-decoration:underline; }
 .tier-tag { display:inline-block; margin-bottom:7px; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:800; }
-.tier-tag.tier_1 { background:#e6f4ec; color:#206642; } .tier-tag.tier_2 { background:#fff3de; color:#80561b; }
+.tier-tag.tier_1 { background:#e6f4ec; color:#206642; } .tier-tag.tier_2 { background:#fff3de; color:#80561b; } .tier-tag.tier_3 { background:#edf1f5; color:#43546b; }
 .meta { color:var(--muted); font-size:12px; margin-top:5px; } .number { text-align:right; font-variant-numeric:tabular-nums; font-weight:700; }
 .date { margin-top:6px; font-variant-numeric:tabular-nums; }
 .active-status,.deadline-priority { display:inline-block; padding:2px 7px; border-radius:6px; font-size:11px; font-weight:800; white-space:nowrap; }
@@ -117,6 +117,16 @@ document.getElementById('reset').addEventListener('click', () => {
   controls.forEach(control => { control.value = ''; });
   document.getElementById('active').value = 'active';
   applyFilters(true);
+});
+document.querySelectorAll('.kpi[data-tier-target]').forEach(card => {
+  card.addEventListener('click', event => {
+    event.preventDefault();
+    controls.forEach(control => { control.value = ''; });
+    document.getElementById('active').value = 'active';
+    document.getElementById('tier').value = card.dataset.tierTarget;
+    applyFilters(true);
+    document.getElementById('notice-list').scrollIntoView({block:'start', inline:'nearest'});
+  });
 });
 more.addEventListener('click', () => { limit += 25; applyFilters(); });
 function revealPriorityCard() {

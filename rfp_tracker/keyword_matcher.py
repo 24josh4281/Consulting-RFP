@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from typing import Iterable
 
-from .tiering import VISIBLE_BUSINESS_TIERS, assess_innergen_tier
+from .tiering import VISIBLE_BUSINESS_TIERS, assess_innergen_tier, is_dashboard_related_notice
 
 
 @dataclass(slots=True)
@@ -195,18 +195,17 @@ def assess_g2b_title(title: str, keyword_config: dict) -> G2BTitleAssessment:
 
 
 def is_climate_related_title(title: str, keyword_config: dict) -> bool:
-    """Return whether a title belongs in the climate/environment tracker.
+    """Return whether a title belongs in the climate-related dashboard.
 
     The all-current G2B reconciliation intentionally starts from an unfiltered
     official result set.  This gate keeps the database scoped to the requested
-    climate, GHG, ETS, and environmental domain before Tier classification.
-    Exclusion terms always win, so items such as cleaning, school uniforms, or
-    ordinary facility purchasing do not enter merely because they contain a
-    broad word such as ``환경``.
+    climate, GHG, ETS, and related domain before Tier classification. Tier 3
+    can be retained as a dashboard reference without entering digest email.
+    Generic ``환경`` alone is not a climate signal.
     """
     return (
         not is_excluded(title, keyword_config)
-        and assess_innergen_tier(title).tier in VISIBLE_BUSINESS_TIERS
+        and is_dashboard_related_notice(title, assess_innergen_tier(title).tier)
     )
 
 

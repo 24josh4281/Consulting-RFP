@@ -8,7 +8,7 @@ PowerShell에서 아래처럼 실행합니다.
 powershell -ExecutionPolicy Bypass -File .\scripts\run_tracker.ps1 -Days 14
 ```
 
-수집 직후 자동 Tier를 현재 이너젠 업무범위 기준으로 다시 점검합니다. 기존 공고 원문과 사람이 수동 지정한 Tier는 유지하며, Tier 3은 이력 보존용으로만 남고 화면·메일·Excel에는 표시하지 않습니다.
+수집 직후 자동 Tier를 현재 이너젠 업무범위 기준으로 다시 점검합니다. 기존 공고 원문과 사람이 수동 지정한 Tier는 유지합니다. 제목상 관련성이 확인되는 Tier 3는 대시보드에 참고 공고로 표시하되, 메일·Excel에는 포함하지 않습니다.
 
 결과물:
 
