@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
-from rfp_tracker.briefing import is_notice_active
+from rfp_tracker.briefing import build_briefing, is_notice_active
 from rfp_tracker.cli import sync_command
 from rfp_tracker.documents import build_public_workbench_payload
 from rfp_tracker.grant_fetchers import (
@@ -134,6 +134,21 @@ class GrantDashboardTests(unittest.TestCase):
             self.assertIn("지원금 신청", html_text)
             self.assertIn("운영기관", html_text)
             self.assertNotIn("application_status", html_text)
+            db.close()
+
+    def test_briefing_respects_explicitly_closed_grant_even_with_future_deadline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = connect(Path(tmp) / "test.db")
+            upsert_notice(db, Notice(
+                source_id="keco_ets_equipment_grants", source_name="한국환경공단", external_id="test-closed",
+                title="2026년 배출권거래제 탄소중립설비 지원사업 공고",
+                url="https://www.keco.or.kr/example", deadline_at="2026-10-01 16:00",
+                category="grant_application", business_tier=TIER_2, relevance_score=8,
+                raw={"application_status": "접수마감"},
+            ))
+            briefing = build_briefing(db, now=datetime(2026, 9, 23, 10, tzinfo=ZoneInfo("Asia/Seoul")))
+            self.assertEqual(briefing["summary"]["tier_2"], 0)
+            self.assertEqual(briefing["summary"]["eligible_notices"], 0)
             db.close()
 
 

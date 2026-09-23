@@ -108,6 +108,7 @@ def notice_view(row: Any, now: datetime | None = None) -> dict[str, Any]:
         "budget": str(row["budget"] or ""),
         "procurement_method": str(row["procurement_method"] or ""),
         "category": str(row["category"] or "") if "category" in row.keys() else "",
+        "is_active": is_notice_active(row, current),
         "published_at": str(row["published_at"] or ""),
         "deadline_at": str(row["deadline_at"] or ""),
         "deadline": deadline,
@@ -176,7 +177,7 @@ def build_briefing(
         item
         for item in views
         if item["relevance_score"] >= min_score
-        and is_notice_active(item, current)
+        and item["is_active"]
         and item["review_status"] not in {"not_relevant", "closed", "needs_review"}
     ]
     today_new = [
