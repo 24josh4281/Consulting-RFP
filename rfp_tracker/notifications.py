@@ -49,7 +49,7 @@ class SmtpSettings:
     password: str
     from_address: str
     use_ssl: bool = False
-    timeout_seconds: int = 30
+    timeout_seconds: int = 90
 
 
 @dataclass(slots=True)
@@ -194,7 +194,7 @@ def load_smtp_settings() -> SmtpSettings:
     if not readiness["ready"]:
         raise ValueError("SMTP configuration is incomplete: " + ", ".join(readiness["missing"]))
     use_ssl = os.environ.get("SMTP_USE_SSL", "").strip().lower() in {"1", "true", "yes"}
-    timeout_text = os.environ.get("SMTP_TIMEOUT_SECONDS", "30").strip() or "30"
+    timeout_text = os.environ.get("SMTP_TIMEOUT_SECONDS", "90").strip() or "90"
     try:
         timeout_seconds = int(timeout_text)
     except ValueError as exc:
@@ -307,6 +307,22 @@ def _notice_lines(items: list[dict[str, Any]]) -> list[str]:
                 lines.append(f"  수집 문서: {links}")
         else:
             lines.append("  수집 문서: 아직 링크가 없습니다. 원문에서 RFP/과업지시서를 확인하세요.")
+    return lines
+
+
+def _daily_notice_lines(items: list[dict[str, Any]]) -> list[str]:
+    if not items:
+        return ["- 해당 공고가 없습니다."]
+    lines: list[str] = []
+    for item in items:
+        marker = f"{item['deadline_priority']} · " if item.get("deadline_priority") else ""
+        lines.append(
+            f"- [{tier_short_label(str(item.get('business_tier') or UNCLASSIFIED))}] "
+            f"{marker}{item['title']} | {item.get('buyer') or item['source_name']} | "
+            f"{_display_budget(item)} | 마감 {_display_deadline(item)}"
+        )
+        if item.get("url"):
+            lines.append(f"  원문: {item['url']}")
     return lines
 
 
@@ -560,10 +576,10 @@ def _email_payload(
                 )
         text_lines.append("")
     if mode == "daily":
-        text_lines.extend([f"[오늘 신규 추가] {len(new_items)}건", *_notice_lines(new_items), ""])
+        text_lines.extend([f"[오늘 신규 추가] {len(new_items)}건", *_daily_notice_lines(new_items), ""])
         ongoing_by_tier = _items_by_tier(ongoing_items)
         for tier, title, _description, _accent, _tint in TIER_SECTIONS[:2]:
-            text_lines.extend([f"[현재 접수 중 {title}] {len(ongoing_by_tier[tier])}건", *_notice_lines(ongoing_by_tier[tier]), ""])
+            text_lines.extend([f"[현재 접수 중 {title}] {len(ongoing_by_tier[tier])}건", *_daily_notice_lines(ongoing_by_tier[tier]), ""])
     else:
         if mode == "weekly" and new_items:
             text_lines.extend(["[오늘 신규 추가]", *_notice_lines(new_items), ""])
