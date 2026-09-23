@@ -275,12 +275,10 @@ def _first_seen_today(item: dict[str, Any], now: datetime) -> bool:
 
 
 def _daily_sections(items: list[dict[str, Any]], now: datetime) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Show new open notices once, then older open Tier 1/2 notices."""
-    new_items = [item for item in items if _first_seen_today(item, now)]
-    ongoing = [
-        item for item in items
-        if item["business_tier"] in {TIER_1, TIER_2} and not _first_seen_today(item, now)
-    ]
+    """Feature new Tier 1 once; retain every other active Tier 1/2 notice."""
+    new_items = [item for item in items if item["business_tier"] == TIER_1 and _first_seen_today(item, now)]
+    new_ids = {int(item["id"]) for item in new_items}
+    ongoing = [item for item in items if item["business_tier"] in {TIER_1, TIER_2} and int(item["id"]) not in new_ids]
     return new_items, ongoing
 
 
@@ -452,7 +450,7 @@ def _newsletter_html(
     if mode == "daily":
         summary_cells.append(
             '<td width="33.33%" style="border:1px solid #D1D5DB;background:#E8F0FE;padding:12px;vertical-align:top;">'
-            '<div style="font-size:12px;font-weight:700;color:#1F6FEB;">오늘 신규</div>'
+            '<div style="font-size:12px;font-weight:700;color:#1F6FEB;">오늘 신규 Tier 1</div>'
             f'<div style="font-size:24px;font-weight:800;color:#16231D;margin-top:3px;">{len(new_items)}</div></td>'
         )
     for tier, title, _description, accent, tint in sections:
@@ -468,8 +466,8 @@ def _newsletter_html(
         sections_html.append(
             '<tr><td style="padding:0 0 22px 0;">'
             '<div style="border-left:5px solid #1F6FEB;padding:2px 0 2px 10px;margin:0 0 8px 0;">'
-            f'<div style="font-size:16px;font-weight:800;color:#1F6FEB;">오늘 신규 추가 <span style="font-size:13px;font-weight:600;color:#4B5563;">{len(new_items)}건</span></div>'
-            '<div style="font-size:12px;color:#4B5563;line-height:1.5;margin-top:3px;">오늘 처음 수집했고 아직 접수 중인 공고입니다. 모든 Tier를 포함합니다.</div></div>'
+            f'<div style="font-size:16px;font-weight:800;color:#1F6FEB;">오늘 신규 추가 · Tier 1 <span style="font-size:13px;font-weight:600;color:#4B5563;">{len(new_items)}건</span></div>'
+            '<div style="font-size:12px;color:#4B5563;line-height:1.5;margin-top:3px;">오늘 처음 수집한 Tier 1 접수 공고만 표시합니다.</div></div>'
             f'{_daily_notice_table(new_items, "#1F6FEB", "#E8F0FE") if mode == "daily" else _notice_table(new_items, "new", "#1F6FEB", "#E8F0FE")}'
             '</td></tr>'
         )
@@ -558,12 +556,12 @@ def _email_payload(
 
     grouped = _items_by_tier(items)
     new_items, ongoing_items = _daily_sections(items, now) if mode == "daily" else (
-        [item for item in items if _first_seen_today(item, now)], items
+        [item for item in items if item["business_tier"] == TIER_1 and _first_seen_today(item, now)], items
     )
     if mode == "daily":
         intro = (
-            f"오늘 {daily_slot} 기준 신규 공고 {len(new_items)}건과 "
-            f"계속 접수 중인 Tier 1·2 공고 {len(ongoing_items)}건입니다."
+            f"오늘 {daily_slot} 기준 신규 Tier 1 공고 {len(new_items)}건과 "
+            f"그 밖의 접수 중인 Tier 1·2 공고 {len(ongoing_items)}건입니다."
         )
     text_lines = [subject, "", intro, ""]
     if mode == "weekly" and deadline_alerts:
@@ -576,13 +574,13 @@ def _email_payload(
                 )
         text_lines.append("")
     if mode == "daily":
-        text_lines.extend([f"[오늘 신규 추가] {len(new_items)}건", *_daily_notice_lines(new_items), ""])
+        text_lines.extend([f"[오늘 신규 추가 · Tier 1] {len(new_items)}건", *_daily_notice_lines(new_items), ""])
         ongoing_by_tier = _items_by_tier(ongoing_items)
         for tier, title, _description, _accent, _tint in TIER_SECTIONS[:2]:
             text_lines.extend([f"[현재 접수 중 {title}] {len(ongoing_by_tier[tier])}건", *_daily_notice_lines(ongoing_by_tier[tier]), ""])
     else:
         if mode == "weekly" and new_items:
-            text_lines.extend(["[오늘 신규 추가]", *_notice_lines(new_items), ""])
+            text_lines.extend(["[오늘 신규 추가 · Tier 1]", *_notice_lines(new_items), ""])
         sections = TIER_SECTIONS if mode == "weekly" else (TIER_SECTIONS[0],)
         for tier, title, description, _accent, _tint in sections:
             text_lines.extend([f"[{title}] {len(grouped[tier])}건", description, *_notice_lines(grouped[tier]), ""])
@@ -731,7 +729,7 @@ def dispatch_notifications(
                 continue
             active_items = [notice_view(row, current) for row in _active_notice_rows(connection, current)]
             items = (
-                [item for item in active_items if item["business_tier"] in {TIER_1, TIER_2} or _first_seen_today(item, current)]
+                [item for item in active_items if item["business_tier"] in {TIER_1, TIER_2}]
                 if mode == "daily" else active_items
             )
             deadline_alerts = (

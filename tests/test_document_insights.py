@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import BytesIO
+from datetime import timedelta
 from pathlib import Path
 import tempfile
 import unittest
@@ -15,6 +16,7 @@ from rfp_tracker.documents import (
     extract_hwpx_paragraphs,
     summarize_hwpx_task,
 )
+from rfp_tracker.briefing import seoul_now
 from rfp_tracker.fetchers import extract_g2b_spec_attachments
 from rfp_tracker.models import Attachment, Notice
 from rfp_tracker.render import render_workbench_dashboard
@@ -29,6 +31,45 @@ from rfp_tracker.storage import (
 
 
 class DocumentInsightTests(unittest.TestCase):
+    def test_public_dashboard_only_features_new_active_tier_one(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            connection = connect(root / "tracker.db")
+            deadline = (seoul_now() + timedelta(days=3)).isoformat(timespec="seconds")
+            for tier, title in (
+                ("tier_1", "신규 Scope 3 산정 컨설팅"),
+                ("tier_2", "신규 온실가스 설비 지원"),
+                ("tier_3", "신규 기후 영상 제작"),
+            ):
+                upsert_notice(
+                    connection,
+                    Notice(
+                        source_id="official_board",
+                        source_name="공식 공고",
+                        external_id=tier,
+                        title=title,
+                        url=f"https://official.example/{tier}",
+                        deadline_at=deadline,
+                        business_tier=tier,
+                        tier_reason="INTERNAL-TIER-REASON",
+                    ),
+                )
+            public = build_public_workbench_payload(connection)
+            path = root / "public.html"
+            render_workbench_dashboard(public, path, public=True)
+            rendered = path.read_text(encoding="utf-8")
+            featured = rendered.split('<ul class="lead-list">', 1)[1].split("</ul>", 1)[0]
+
+            self.assertEqual(public["summary"]["new_tier_1_today"], 1)
+            self.assertIn("신규 Scope 3 산정 컨설팅", featured)
+            self.assertNotIn("신규 온실가스 설비 지원", featured)
+            self.assertNotIn("신규 기후 영상 제작", featured)
+            self.assertIn("신규 온실가스 설비 지원", rendered)
+            self.assertNotIn("INTERNAL-TIER-REASON", rendered)
+            self.assertIn('id="result-count"', rendered)
+            self.assertIn('id="more"', rendered)
+            connection.close()
+
     def test_g2b_named_attachment_uses_filename_when_download_url_has_no_extension(self):
         attachments = extract_g2b_spec_attachments(
             {

@@ -785,18 +785,19 @@ class NotificationTests(unittest.TestCase):
             self.assertNotIn("Tier 3 · 참고 / 직접 컨설팅 비적합", newsletter)
             self.assertIn("border:1px solid #D1D5DB", newsletter)
             self.assertIn("온실가스 저감 설비 설치 지원", newsletter)
-            self.assertIn("탄소중립 포럼 영상 제작", newsletter)
-            self.assertEqual(newsletter.count("탄소중립 포럼 영상 제작"), 1)
+            self.assertNotIn("탄소중립 포럼 영상 제작", newsletter)
+            self.assertIn("오늘 신규 추가 · Tier 1", newsletter)
             self.assertIn("https://24josh4281.github.io/Consulting-RFP/", newsletter)
             connection.close()
 
-    def test_daily_digest_keeps_new_notices_and_only_older_active_tier_one_two(self):
+    def test_daily_digest_features_new_tier_one_and_keeps_all_active_tier_one_two(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             connection = connect(Path(tmp_dir) / "tracker.db")
             current = datetime(2026, 9, 23, 10, 0, tzinfo=ZoneInfo("Asia/Seoul"))
             dispatch_notifications(connection, recipients=["alerts@example.com"], mode="immediate", now=current - timedelta(days=1))
             cases = [
                 ("new-tier-1", "신규 Scope 3 산정 용역", TIER_1, current),
+                ("new-tier-2", "신규 온실가스 설비 지원", TIER_2, current),
                 ("new-tier-3", "신규 탄소중립 행사 용역", TIER_3, current),
                 ("old-tier-1", "진행 중 배출권거래제 연구", TIER_1, current - timedelta(days=2)),
                 ("old-tier-2", "진행 중 온실가스 설비 지원", TIER_2, current - timedelta(days=2)),
@@ -834,10 +835,12 @@ class NotificationTests(unittest.TestCase):
             )
             self.assertEqual(result[0].sent, 1)
             self.assertEqual(len(captured), 1)
-            for _external_id, title, _tier, _first_seen in cases[:4]:
+            for _external_id, title, _tier, _first_seen in (cases[0], cases[1], cases[3], cases[4]):
                 self.assertEqual(captured[0].html.count(title), 1)
-            self.assertNotIn(cases[4][1], captured[0].html)
-            self.assertIn("오늘 신규 추가", captured[0].text)
+            self.assertNotIn(cases[2][1], captured[0].html)
+            self.assertNotIn(cases[5][1], captured[0].html)
+            self.assertIn("오늘 신규 추가 · Tier 1", captured[0].text)
+            self.assertIn("[오늘 신규 추가 · Tier 1] 1건", captured[0].text)
             self.assertIn("현재 접수 중 Tier 1", captured[0].text)
             self.assertIn("현재 접수 중 Tier 2", captured[0].text)
             self.assertIn("https://24josh4281.github.io/Consulting-RFP/", captured[0].text)

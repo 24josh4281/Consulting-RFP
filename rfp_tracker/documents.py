@@ -1015,6 +1015,11 @@ def build_public_workbench_payload(connection: sqlite3.Connection) -> dict[str, 
                 "published_at": str(notice.get("published_at") or ""),
                 "first_seen_at": str(notice.get("first_seen_at") or ""),
                 "is_new_today": bool(notice.get("is_new_today")),
+                "is_new_tier_1": bool(
+                    notice.get("is_new_today")
+                    and notice.get("is_active")
+                    and notice.get("priority_status") == "official_tier_1"
+                ),
                 "deadline_at": str(notice.get("deadline_at") or ""),
                 "is_active": bool(notice.get("is_active")),
                 "deadline_priority": str(notice.get("deadline_priority") or ""),
@@ -1068,6 +1073,7 @@ def build_public_workbench_payload(connection: sqlite3.Connection) -> dict[str, 
         "total_notices": len(public_notices),
         "active_notices": sum(1 for item in public_notices if item["is_active"]),
         "new_today": sum(1 for item in public_notices if item["is_new_today"]),
+        "new_tier_1_today": sum(1 for item in public_notices if item["is_new_tier_1"]),
         "new_active_today": sum(1 for item in public_notices if item["is_new_today"] and item["is_active"]),
         "public_document_links": public_document_links,
         "extracted_documents": sum(
