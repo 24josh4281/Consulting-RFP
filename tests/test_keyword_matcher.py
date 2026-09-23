@@ -39,10 +39,25 @@ class TieringTests(unittest.TestCase):
         cases = [
             ("Scope 3 온실가스 산정 고도화 컨설팅 용역", TIER_1),
             ("ETS 배출권 제도 분석 컨설팅", TIER_1),
-            ("배출권거래제 통합정보시스템 기능개선 연구 용역", TIER_1),
+            ("배출권거래제 통합정보시스템 기능개선 연구 용역", TIER_3),
             ("기후변화 산업 전환 시나리오 분석 연구", TIER_1),
+            ("아산화질소 온실가스 저감 및 자원화 기술개발사업 기획 연구", TIER_1),
+            ("비이산화탄소 온실가스 저감·관리 기술개발사업 사전기획 연구", TIER_1),
+            ("Verra 외부사업 감축실적 방법론 개발 컨설팅", TIER_1),
+            ("ITMO 국제감축사업 온실가스 감축량 평가 용역", TIER_1),
+            ("CBAM 및 CSRD Scope 1~3 공시 대응 컨설팅", TIER_1),
+            ("RE100 PPA 조달 계획 및 재무적 영향 분석", TIER_1),
+            ("K-RE100 재생에너지 PPA 조달 중개 및 민감도 진단", TIER_1),
+            ("PAS 2060 탄소중립 인증 계획 수립", TIER_1),
+            ("온실가스 감축실적 Credit 발급 지원", TIER_1),
             ("온실가스 저감 설비 설치 지원사업", TIER_2),
-            ("스마트 불법대기배출 통합 플랫폼 개발", TIER_2),
+            ("탄소중립 설비투자 지원사업_인버터 공기압축기", TIER_3),
+            ("환경설비 도입 보조금 지원사업", TIER_2),
+            ("친환경 설비 도입 금리 지원사업", TIER_2),
+            ("온실가스 감축설비 저금리 융자 지원사업", TIER_2),
+            ("스마트 불법대기배출 통합 플랫폼 개발", TIER_3),
+            ("파주교하 상록아파트 외벽 환경 개선공사", TIER_3),
+            ("기후위기 대응 아동복지시설 지원사업", TIER_3),
             ("수질복원센터 하수찌꺼기 운반 및 처리용역", TIER_3),
             ("탄소중립펀드 투자유치 운영 용역", TIER_3),
             ("기후위기 대응 홍보 영상 제작", TIER_3),
@@ -87,6 +102,20 @@ class TieringTests(unittest.TestCase):
             self.assertEqual(row["tier_reason"], "사내 판단으로 이번에는 제외")
             self.assertEqual(row["title"], "온실가스 산정 컨설팅 용역 (정정)")
             connection.close()
+
+    def test_tier_two_requires_a_customer_application_not_a_supplier_purchase(self):
+        self.assertEqual(
+            assess_innergen_tier(
+                "2026년 탄소중립 설비투자 지원사업_인버터 공기압축기",
+                buyer="주식회사 구산테크",
+                procurement_method="일반경쟁",
+            ).tier,
+            TIER_3,
+        )
+        self.assertEqual(
+            assess_innergen_tier("환경설비 도입 보조금 지원사업 참여기업 모집").tier,
+            TIER_2,
+        )
 
 
 class KeywordMatcherTests(unittest.TestCase):
@@ -134,6 +163,14 @@ class KeywordMatcherTests(unittest.TestCase):
         assessment = assess_g2b_title("스마트 불법대기배출 통합 플랫폼 개발", PROJECT_KEYWORDS)
         self.assertEqual(assessment.tier, "strong")
         self.assertIn("대기배출", assessment.strong_keywords)
+
+    def test_g2b_intake_only_accepts_innergen_scope(self):
+        from rfp_tracker.keyword_matcher import is_climate_related_title
+
+        self.assertTrue(is_climate_related_title("RE100 PPA 조달 전략 수립", PROJECT_KEYWORDS))
+        self.assertTrue(is_climate_related_title("탄소중립 설비투자 지원사업", PROJECT_KEYWORDS))
+        self.assertFalse(is_climate_related_title("친환경 교통체계 구축사업 관련 연수", PROJECT_KEYWORDS))
+        self.assertFalse(is_climate_related_title("생활환경 개선공사", PROJECT_KEYWORDS))
 
 
 class StorageReviewTests(unittest.TestCase):
@@ -203,7 +240,7 @@ class StorageReviewTests(unittest.TestCase):
             self.assertEqual(rows[0]["review_status"], "needs_review")
             self.assertEqual(alert[0].planned, 0)
             self.assertEqual(sent, [])
-            self.assertEqual(briefing["summary"]["total_notices"], 1)
+            self.assertEqual(briefing["summary"]["total_notices"], 0)
             self.assertEqual(briefing["summary"]["eligible_notices"], 0)
             connection.close()
 
@@ -342,7 +379,7 @@ class G2BFetcherTests(unittest.TestCase):
         self.assertEqual(len(notices), 1)
         self.assertIn("환경영향평가", notices[0].matched_keywords)
 
-    def test_g2b_uses_title_only_and_preserves_ambiguous_notices_for_review(self):
+    def test_g2b_uses_title_only_and_drops_unrelated_environment_notices(self):
         source = {
             "id": "g2b_service_bids",
             "name": "G2B environmental services",
@@ -371,9 +408,7 @@ class G2BFetcherTests(unittest.TestCase):
         }
         fetcher = build_fetcher(source, PROJECT_KEYWORDS, {}, Path("."))
         notices = fetcher._parse_payload(json.dumps(payload, ensure_ascii=False))
-        self.assertEqual(len(notices), 1)
-        self.assertEqual(notices[0].review_status, "needs_review")
-        self.assertEqual(notices[0].category, "g2b_bid_api_review")
+        self.assertEqual(notices, [])
 
     def test_g2b_api_error_payload_is_reported_without_creating_notice(self):
         source = {
@@ -532,6 +567,7 @@ class BriefingTests(unittest.TestCase):
                     deadline_at="20260920",
                     relevance_score=7,
                     matched_keywords=["온실가스", "배출권거래제"],
+                    business_tier=TIER_1,
                 ),
             )
             upsert_notice(
@@ -544,6 +580,7 @@ class BriefingTests(unittest.TestCase):
                     url="https://example.com/rfp",
                     relevance_score=6,
                     matched_keywords=["기후", "분석"],
+                    business_tier=TIER_1,
                     attachments=[Attachment(label="제안요청서", url="https://example.com/rfp.pdf", file_type="pdf")],
                 ),
             )
@@ -745,6 +782,15 @@ class NotificationTests(unittest.TestCase):
                     business_tier=TIER_3,
                     tier_reason="행사·영상 사업",
                 ),
+                Notice(
+                    source_id="sample_esg_tenders",
+                    source_name="Sample only",
+                    external_id="example-tier-1",
+                    title="샘플 배출권거래제 컨설팅",
+                    url="https://example.com/sample-tier-1",
+                    relevance_score=7,
+                    business_tier=TIER_1,
+                ),
             ]
             for notice in notices:
                 upsert_notice(connection, notice)
@@ -765,6 +811,7 @@ class NotificationTests(unittest.TestCase):
             self.assertEqual(len(immediate_payloads), 1)
             self.assertIn("Scope 3 산정 고도화 컨설팅", immediate_payloads[0].html)
             self.assertNotIn("온실가스 저감 설비 설치 지원", immediate_payloads[0].html)
+            self.assertNotIn("샘플 배출권거래제 컨설팅", immediate_payloads[0].html)
 
             digest_payloads = []
             daily = dispatch_notifications(
@@ -781,13 +828,27 @@ class NotificationTests(unittest.TestCase):
             self.assertIn("INNERGEN CLIMATE INTELLIGENCE", newsletter)
             self.assertIn("오늘 신규 추가", newsletter)
             self.assertIn("Tier 1 · 이너젠 직접 컨설팅 검토", newsletter)
-            self.assertIn("Tier 2 · 고객사 추천 가능 사업", newsletter)
+            self.assertIn("Tier 2 · 고객사 설비·금융지원 추천", newsletter)
             self.assertNotIn("Tier 3 · 참고 / 직접 컨설팅 비적합", newsletter)
             self.assertIn("border:1px solid #D1D5DB", newsletter)
             self.assertIn("온실가스 저감 설비 설치 지원", newsletter)
             self.assertNotIn("탄소중립 포럼 영상 제작", newsletter)
+            self.assertNotIn("샘플 배출권거래제 컨설팅", newsletter)
             self.assertIn("오늘 신규 추가 · Tier 1", newsletter)
             self.assertIn("https://24josh4281.github.io/Consulting-RFP/", newsletter)
+            weekly_payloads = []
+            weekly = dispatch_notifications(
+                connection,
+                recipients=["alerts@example.com"],
+                mode="weekly",
+                send=True,
+                sender=lambda _recipient, payload: weekly_payloads.append(payload),
+                now=now + timedelta(minutes=4),
+            )
+            self.assertEqual(weekly[0].sent, 1)
+            self.assertIn("온실가스 저감 설비 설치 지원", weekly_payloads[0].html)
+            self.assertNotIn("탄소중립 포럼 영상 제작", weekly_payloads[0].html)
+            self.assertNotIn("Tier 3", weekly_payloads[0].text)
             connection.close()
 
     def test_daily_digest_features_new_tier_one_and_keeps_all_active_tier_one_two(self):

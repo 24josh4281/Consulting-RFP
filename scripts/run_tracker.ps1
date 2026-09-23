@@ -28,6 +28,7 @@ function Invoke-Checked {
 }
 
 Invoke-Checked { python -m rfp_tracker sync --config $Config --db $Database --days $Days } "sync"
+Invoke-Checked { python -m rfp_tracker tier-audit --db $Database --apply } "tier-audit"
 Invoke-Checked {
   python -m rfp_tracker extract-documents --db $Database --cache-dir $DocumentCache
 } "extract-documents"

@@ -788,11 +788,15 @@ def _listing_budget_to_krw(value: object) -> int | None:
 
 
 def build_workbench_payload(connection: sqlite3.Connection) -> dict[str, object]:
-    """Build a non-secret, source-preserving dataset for HTML and Excel outputs."""
+    """Build the Tier 1/2 working set without deleting historical source rows."""
     notices: list[dict[str, object]] = []
     current = seoul_now()
     current_date = current.date()
     for row in list_workbench_notices(connection):
+        if str(row["business_tier"] or "") not in {"tier_1", "tier_2"}:
+            continue
+        if _is_sample_notice(str(row["source_id"] or ""), str(row["url"] or "")):
+            continue
         attachments = [
             dict(item) for item in _safe_json_list(row["attachments_json"]) if isinstance(item, dict)
         ]
@@ -880,6 +884,7 @@ def build_workbench_payload(connection: sqlite3.Connection) -> dict[str, object]
         )
 
     document_rows = list_document_rows(connection, include_missing=True)
+    visible_notice_ids = {int(notice["id"]) for notice in notices}
     insights_by_key: dict[tuple[int, str], dict[str, object]] = {}
     for notice in notices:
         for insight in list(notice["insights"]):
@@ -896,6 +901,8 @@ def build_workbench_payload(connection: sqlite3.Connection) -> dict[str, object]
     documents: list[dict[str, object]] = []
     for document in document_rows:
         notice_id = int(document["notice_id"])
+        if notice_id not in visible_notice_ids:
+            continue
         if not document["document_url"] and attachment_urls_by_notice.get(notice_id):
             continue
         key = (int(document["notice_id"]), str(document["document_url"] or ""))
@@ -939,7 +946,6 @@ def build_workbench_payload(connection: sqlite3.Connection) -> dict[str, object]
         "new_tier_2_today": sum(1 for item in notices if item["is_new_today"] and item["business_tier"] == "tier_2"),
         "tier_1": sum(1 for item in notices if item["business_tier"] == "tier_1"),
         "tier_2": sum(1 for item in notices if item["business_tier"] == "tier_2"),
-        "tier_3": sum(1 for item in notices if item["business_tier"] == "tier_3"),
         "extracted_documents": sum(
             1 for item in documents if item["extraction_status"] == "extracted"
         ),
@@ -970,8 +976,8 @@ def build_public_workbench_payload(connection: sqlite3.Connection) -> dict[str, 
     """Return an explicit public-only projection for a static dashboard.
 
     The public site receives source facts and source-backed document evidence only.
-    Human review state, Tier logic, fit-review notes, local cache paths, and sample
-    records are excluded before the renderer receives the payload.
+    Only the public Tier 1/2 label is disclosed. Human review state, classification
+    reasons, fit-review notes, local cache paths, and sample records are excluded.
     """
     internal = build_workbench_payload(connection)
     public_notices: list[dict[str, object]] = []
@@ -1010,6 +1016,7 @@ def build_public_workbench_payload(connection: sqlite3.Connection) -> dict[str, 
             {
                 "id": int(notice["id"]),
                 "source_name": str(notice.get("source_name") or ""),
+                "business_tier": str(notice.get("business_tier") or ""),
                 "title": str(notice.get("title") or ""),
                 "url": notice_url,
                 "published_at": str(notice.get("published_at") or ""),
@@ -1072,6 +1079,8 @@ def build_public_workbench_payload(connection: sqlite3.Connection) -> dict[str, 
         "generated_at": seoul_now().strftime("%Y-%m-%d %H:%M KST"),
         "total_notices": len(public_notices),
         "active_notices": sum(1 for item in public_notices if item["is_active"]),
+        "active_tier_1": sum(1 for item in public_notices if item["is_active"] and item["business_tier"] == "tier_1"),
+        "active_tier_2": sum(1 for item in public_notices if item["is_active"] and item["business_tier"] == "tier_2"),
         "new_today": sum(1 for item in public_notices if item["is_new_today"]),
         "new_tier_1_today": sum(1 for item in public_notices if item["is_new_tier_1"]),
         "new_active_today": sum(1 for item in public_notices if item["is_new_today"] and item["is_active"]),

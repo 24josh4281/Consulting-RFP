@@ -4,6 +4,8 @@ import re
 from dataclasses import dataclass
 from typing import Iterable
 
+from .tiering import VISIBLE_BUSINESS_TIERS, assess_innergen_tier
+
 
 @dataclass(slots=True)
 class MatchResult:
@@ -99,6 +101,13 @@ def assess_g2b_title(title: str, keyword_config: dict) -> G2BTitleAssessment:
     """
 
     match = score_text(title, keyword_config)
+    business_fit = assess_innergen_tier(title)
+    if business_fit.tier in VISIBLE_BUSINESS_TIERS and not is_excluded(title, keyword_config):
+        return G2BTitleAssessment(
+            "strong",
+            MatchResult(max(3, match.score), match.keywords),
+            list(business_fit.matched_signals),
+        )
     groups = keyword_config.get("keyword_groups", {})
     policy = keyword_config.get("g2b_title_policy", {})
 
@@ -195,9 +204,10 @@ def is_climate_related_title(title: str, keyword_config: dict) -> bool:
     ordinary facility purchasing do not enter merely because they contain a
     broad word such as ``환경``.
     """
-    if is_excluded(title, keyword_config):
-        return False
-    return assess_g2b_title(title, keyword_config).tier != "ignore"
+    return (
+        not is_excluded(title, keyword_config)
+        and assess_innergen_tier(title).tier in VISIBLE_BUSINESS_TIERS
+    )
 
 
 def extension_from_url(url: str) -> str:

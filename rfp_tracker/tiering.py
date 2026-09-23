@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-"""Explainable business-fit classification for Innergen's RFP workflow.
+"""Conservative, title-led fit assessment for Innergen's climate workflow.
 
-This module deliberately evaluates only collected public notice metadata.  It does not
-infer bid eligibility or change any source text.  A human may override its result through
-the CLI; storage preserves that manual decision on later syncs.
+Tier 3 remains an internal exclusion value so historical source rows and manual
+decisions can be preserved. Only Tier 1/2 are reader-facing opportunities.
 """
 
 import re
@@ -17,18 +16,19 @@ TIER_2 = "tier_2"
 TIER_3 = "tier_3"
 UNCLASSIFIED = "unclassified"
 VALID_BUSINESS_TIERS = {TIER_1, TIER_2, TIER_3, UNCLASSIFIED}
+VISIBLE_BUSINESS_TIERS = frozenset({TIER_1, TIER_2})
 
 TIER_LABELS = {
     TIER_1: "Tier 1 · 이너젠 직접 컨설팅 검토",
-    TIER_2: "Tier 2 · 고객사 추천 가능 사업",
-    TIER_3: "Tier 3 · 참고 / 직접 컨설팅 비적합",
+    TIER_2: "Tier 2 · 고객사 설비·금융지원 추천",
+    TIER_3: "제외 · 업무범위 밖",
     UNCLASSIFIED: "미분류 · 원문 확인 필요",
 }
 
 TIER_SHORT_LABELS = {
     TIER_1: "Tier 1",
     TIER_2: "Tier 2",
-    TIER_3: "Tier 3",
+    TIER_3: "제외",
     UNCLASSIFIED: "미분류",
 }
 
@@ -40,213 +40,75 @@ class TierAssessment:
     matched_signals: tuple[str, ...] = ()
 
 
-# Tier 3 is intentionally evaluated first.  A climate keyword occurring in a fund,
-# event, promotional video, or science-only project should not create an Innergen
-# consulting alert.
-TIER_3_NON_CONSULTING_SIGNALS = (
-    "투자유치",
-    "투자",
-    "펀드",
-    "ir 행사",
-    "행사",
-    "포럼",
-    "세미나",
-    "컨퍼런스",
-    "콘퍼런스",
-    "박람회",
-    "전시",
-    "캠페인",
-    "홍보",
-    "영상",
-    "콘텐츠 제작",
-    "촬영",
-    "교육",
-    "연수",
-    "공모전",
-    "시상",
+# A ministry/buyer name containing "기후" and a generic "용역" category are
+# not evidence of fit. These signals are evaluated against the notice title.
+NON_CONSULTING_SIGNALS = (
+    "투자유치", "펀드", "ir 행사", "행사", "포럼", "세미나", "컨퍼런스",
+    "콘퍼런스", "박람회", "전시회", "캠페인", "홍보", "영상", "촬영",
+    "교육", "연수", "공모전", "시상", "조직문화", "국민만족도",
+    "메타버스", "iot센서", "센서 구매", "시스템 기능개선", "서버 구매",
 )
 
-TIER_3_SCIENCE_SIGNALS = (
-    "순수과학",
-    "기초과학",
-    "기초 연구",
-    "실험실",
-    "실험",
-    "시료",
-    "시약",
-    "분석장비",
-    "유전자",
-    "미생물",
-    "천문",
-    "원자력",
-    "핵연료",
-    "심해",
-    "부식",
-    "소재",
-    "파우더",
+SCIENCE_ONLY_SIGNALS = (
+    "순수과학", "기초과학", "기초 연구", "실험실", "시료", "시약",
+    "분석장비", "유전자", "미생물", "핵연료", "파우더", "소재 실험",
 )
 
-# These are direct Innergen-style consulting themes.  A specific equipment purchase/
-# installation without a consulting or analysis work signal is classified as Tier 2 first;
-# this prevents an ETS keyword from lifting customer capex support into Tier 1.
-TIER_1_EXPLICIT_SIGNALS = (
-    "온실가스 외부사업",
-    "외부사업",
-    "배출권거래제",
-    "배출권 거래제",
-    "배출권",
-    "k-ets",
-    " ets ",
-    "scope 1",
-    "scope 2",
-    "scope 3",
-    "스코프1",
-    "스코프2",
-    "스코프3",
-    "온실가스 산정",
-    "배출량 산정",
-    "배출계수",
-    "온실가스 인벤토리",
-    "인벤토리",
-    "명세서",
-    "모니터링계획",
-    "모니터링 계획",
-    "감축실적",
-    "상쇄",
-    "할당",
-    "mrv",
-    "기후리스크",
-    "전환리스크",
-    "물리적 리스크",
-    "시나리오 분석",
-    "기후변화 산업",
-    "cdp",
-    "tcfd",
-    "tnfd",
-    "issb",
-    "ifrs s1",
-    "ifrs s2",
-    "지속가능보고서",
-    "지속가능경영보고서",
+TIER_1_DOMAINS = (
+    "온실가스", "배출권거래제", "배출권 거래제", "배출권", "k-ets",
+    "ets", "외부사업", "국제감축", "국제 감축", "itmo", "감축실적",
+    "감축량", "상쇄배출권", "verra", "gold standard", "puro earth",
+    "scope 1", "scope 2", "scope 3", "scope1", "scope2", "scope3",
+    "스코프1", "스코프2", "스코프3", "배출량 산정", "배출계수",
+    "목표관리제", "mrv", "csrd", "cbam", "issb", "kssb", "cdp",
+    "탄소중립", "넷제로", "net zero", "탈탄소", "sbti", "pas 2060",
+    "iso 14064", "iso14064", "iso 14068", "iso14068",
+    "기후변화 산업", "산업 전환 시나리오",
+    "re100", "k-re100", "ppa", "vppa", "i-rec", "rec", "재생에너지 조달",
 )
 
-TIER_1_DOMAIN_SIGNALS = (
-    "기후변화",
-    "기후위기",
-    "기후",
-    "온실가스",
-    "배출권",
-    "탄소중립",
-    "넷제로",
-    "net zero",
-    "탈탄소",
-    "탄소발자국",
-    "전과정평가",
-    "lca",
-    "환경성적표지",
-    "기후적응",
-    "esg",
+TIER_1_WORK = (
+    "컨설팅", "산정", "평가", "검증", "방법론", "발급", "인벤토리",
+    "명세서", "모니터링계획", "모니터링 계획", "공시", "보고", "전략",
+    "시나리오", "로드맵", "이행계획", "전환계획", "할당신청",
+    "과부족 분석", "한계저감비용", "재무적 영향", "거버넌스",
+    "조달 계획", "전력사용 패턴", "포트폴리오", "인증", "기획 연구",
+    "기획연구", "사전기획", "타당성조사", "영향 및 대응연구",
+    "이행점검", "관리체계", "제도 개선", "운영 지원", "운영지원",
+    "계획 수립", "진단", "민감도", "중개", "확보 지원", "검토",
 )
 
-TIER_1_WORK_SIGNALS = (
-    "컨설팅",
-    "산정",
-    "고도화",
-    "분석",
-    "시나리오",
-    "전략",
-    "로드맵",
-    "전환계획",
-    "계획 수립",
-    "이행계획",
-    "검토",
-    "검증",
-    "인증",
-    "명세",
-    "모니터링",
-    "인벤토리",
-    "연구",
-    "조사",
-    "평가",
-    "진단",
-    "관리체계",
-)
+# Research that designs a GHG reduction programme is advisory; technology
+# development, lab testing or purchases on their own are not.
+PLANNING_RESEARCH = ("기획 연구", "기획연구", "사전기획", "사업 기획")
+SCIENCE_PROJECT = ("기술개발", "실증", "시험", "r&d")
 
-# Tier 2 means a climate/environment-related physical, operational, or technical
-# project that may fit a customer's recommendation rather than Innergen's own core work.
-TIER_2_DOMAIN_SIGNALS = (
-    "기후",
-    "탄소",
-    "온실가스",
-    "배출",
-    "환경",
-    "대기",
-    "수질",
-    "물순환",
-    "비점오염",
-    "인공습지",
-    "자원순환",
-    "순환경제",
-    "재생에너지",
-    "신재생에너지",
-    "에너지효율",
-    "친환경",
-    "환경영향평가",
+TIER_2_DOMAINS = (
+    "탄소중립", "온실가스", "저탄소", "탈탄소", "탄소감축",
+    "탄소 감축", "재생에너지", "신재생에너지", "에너지효율",
+    "환경설비", "환경 설비", "친환경 설비", "오염저감설비", "오염 저감 설비",
 )
-
-TIER_2_SUPPORT_SIGNALS = (
-    "설비",
-    "시설",
-    "장비",
-    "시공",
-    "공사",
-    "설치",
-    "보수",
-    "유지보수",
-    "정비",
-    "현대화",
-    "기본설계",
-    "실시설계",
-    "처리시설",
-    "처리장",
-    "정화",
-    "공법",
-    "플랫폼 개발",
-    "시스템 구축",
-    "제품",
-    "품질인증",
-    "현장평가",
-    "환경개선",
-    "사후환경영향조사",
-    "운영",
-    "관리 대행",
+TIER_2_SUPPORT = (
+    "지원사업", "지원 사업", "보조금", "지원금", "융자", "금리",
+    "이차보전", "이자지원", "이자 지원", "자금지원", "자금 지원",
+    "설비 지원", "설비지원", "설치 지원", "도입 지원", "투자 지원",
 )
-
-TIER_2_PHYSICAL_SUPPORT_SIGNALS = (
-    "설비",
-    "시설",
-    "장비",
-    "시공",
-    "공사",
-    "설치",
-    "보수",
-    "유지보수",
-    "정비",
-    "처리시설",
-    "처리장",
-    "정화",
-    "공법",
-    "제품",
-    "환경개선",
+TIER_2_EQUIPMENT_OR_FINANCE = (
+    "설비", "시설", "장비", "설치", "도입", "설비투자", "효율화",
+    "에너지전환", "공기압축기", "인버터", "히트펌프", "모터",
+    "보일러", "자금", "융자", "금리", "이차보전", "이자지원",
+    "이자 지원", "재생에너지", "신재생에너지",
 )
-
-TIER_2_REFERRAL_SIGNALS = (
-    "환경영향평가",
-    "사후환경영향조사",
-    "환경성 검토",
-    "환경조사",
-    "환경관리",
+TIER_2_APPLICATION = (
+    "모집", "신청", "공모", "접수", "참여기업", "지원대상",
+    "사업공고", "사업 공고", "자금 신청",
 )
+GOODS_PROCUREMENT = (
+    "구매", "납품", "물품", "견적", "시공", "발주", "공기압축기",
+    "컴프레셔", "인버터", "히트펌프", "보일러", "모터", "fems",
+    "사출성형기", "가공기", "레이저", "건조로", "쇼트기",
+)
+PRIVATE_BUYER = ("주식회사", "유한회사", "(주)", "㈜", "co., ltd", "corp.")
 
 
 def tier_label(tier: str) -> str:
@@ -257,21 +119,12 @@ def tier_short_label(tier: str) -> str:
     return TIER_SHORT_LABELS.get(tier, TIER_SHORT_LABELS[UNCLASSIFIED])
 
 
-def _normalized_text(title: str, category: str, matched_keywords: Iterable[str] | None) -> str:
-    parts = [title or "", category or ""]
-    if matched_keywords:
-        parts.extend(str(keyword) for keyword in matched_keywords)
-    return " ".join(" ".join(parts).casefold().split())
-
-
 def _signals(text: str, terms: Iterable[str]) -> tuple[str, ...]:
     matched: list[str] = []
     for term in terms:
-        needle = term.casefold()
-        # The source matcher already treats English abbreviations as whole tokens.
-        # Apply the same safeguard here so CDPR is not explained as a CDP opportunity.
+        needle = term.casefold().strip()
         if needle.isascii() and any(character.isalpha() for character in needle):
-            pattern = r"(?<![a-z0-9])" + re.escape(needle.strip()) + r"(?![a-z0-9])"
+            pattern = r"(?<![a-z0-9])" + re.escape(needle) + r"(?![a-z0-9])"
             if re.search(pattern, text):
                 matched.append(term)
         elif needle in text:
@@ -280,14 +133,8 @@ def _signals(text: str, terms: Iterable[str]) -> tuple[str, ...]:
 
 
 def _reason(prefix: str, signals: Iterable[str]) -> str:
-    visible = list(signals)[:3]
-    if visible:
-        return f"{prefix} ({', '.join(visible)})"
-    return prefix
-
-
-def _combined_signals(*groups: Iterable[str]) -> tuple[str, ...]:
-    return tuple(dict.fromkeys(signal for group in groups for signal in group))
+    visible = list(dict.fromkeys(signals))[:3]
+    return f"{prefix} ({', '.join(visible)})" if visible else prefix
 
 
 def assess_innergen_tier(
@@ -295,83 +142,49 @@ def assess_innergen_tier(
     *,
     category: str = "",
     matched_keywords: Iterable[str] | None = None,
+    buyer: str = "",
+    procurement_method: str = "",
 ) -> TierAssessment:
-    """Classify a notice into a business-fit tier without mutating source data.
-
-    The decision uses the title first and may supplement it with a source category.  The
-    general tracker keyword list is deliberately not passed by the sync path: it can contain
-    a broad source-side match and must not elevate an unrelated security/IT procurement.
-    Buyer names are also excluded because a buyer named "환경…" must not turn an unrelated
-    procurement into a climate consulting opportunity.
-    """
-
-    text = _normalized_text(title, category, matched_keywords)
+    """Classify title evidence; buyer/procurement facts can reject supplier bids."""
+    del category, matched_keywords
+    text = " ".join((title or "").casefold().split())
     if not text:
-        return TierAssessment(TIER_3, "공고 제목·업무 신호가 없어 직접 컨설팅 적합성을 확인하지 못함")
+        return TierAssessment(TIER_3, "제외: 공고 제목에서 사업범위를 확인할 수 없음")
 
-    non_consulting = _signals(text, TIER_3_NON_CONSULTING_SIGNALS)
-    if non_consulting:
-        return TierAssessment(
-            TIER_3,
-            _reason("행사·영상·투자·교육 등 직접 컨설팅과 거리가 있는 사업 신호", non_consulting),
-            non_consulting,
+    unrelated = _signals(text, NON_CONSULTING_SIGNALS)
+    if unrelated:
+        return TierAssessment(TIER_3, _reason("제외: 행사·홍보·IT 구매 등 비대상", unrelated), unrelated)
+
+    domain = _signals(text, TIER_1_DOMAINS)
+    support_domain = _signals(text, TIER_2_DOMAINS)
+    support = _signals(text, TIER_2_SUPPORT)
+    equipment = _signals(text, TIER_2_EQUIPMENT_OR_FINANCE)
+    if support_domain and support and equipment:
+        accepting_applications = bool(_signals(text, TIER_2_APPLICATION))
+        supplier_purchase = bool(_signals(text, GOODS_PROCUREMENT))
+        private_supplier_bid = bool(procurement_method.strip()) and bool(
+            _signals(buyer.casefold(), PRIVATE_BUYER)
         )
+        if not accepting_applications and (supplier_purchase or private_supplier_bid):
+            return TierAssessment(
+                TIER_3,
+                "제외: 지원사업을 활용한 개별 기업의 물품·설비 구매입찰로 신청 공고가 아님",
+            )
+        signals = tuple(dict.fromkeys((*support_domain, *support, *equipment)))
+        return TierAssessment(TIER_2, _reason("고객사 설비·금융지원 사업", signals), signals)
 
-    science_only = _signals(text, TIER_3_SCIENCE_SIGNALS)
-    if science_only:
-        return TierAssessment(
-            TIER_3,
-            _reason("순수 과학·실험 중심 사업 신호", science_only),
-            science_only,
-        )
+    if not domain:
+        return TierAssessment(TIER_3, "제외: 이너젠 기후·온실가스·배출권 업무영역 신호 없음")
 
-    tier_2_domain = _signals(text, TIER_2_DOMAIN_SIGNALS)
-    physical_support = _signals(text, TIER_2_PHYSICAL_SUPPORT_SIGNALS)
-    tier_1_work = _signals(text, TIER_1_WORK_SIGNALS)
-    if tier_2_domain and physical_support and not tier_1_work:
-        signals = _combined_signals(tier_2_domain, physical_support)
-        return TierAssessment(
-            TIER_2,
-            _reason("기후·환경 관련 설비 구매·설치·공사 등 고객사 지원 신호", signals),
-            signals,
-        )
+    science = _signals(text, SCIENCE_ONLY_SIGNALS)
+    if science:
+        return TierAssessment(TIER_3, _reason("제외: 실험·기초과학 중심", science), science)
+    if _signals(text, SCIENCE_PROJECT) and not _signals(text, PLANNING_RESEARCH):
+        return TierAssessment(TIER_3, "제외: 기술개발·실증·시험 자체는 컨설팅 과업이 아님")
 
-    explicit_tier_1 = _signals(text, TIER_1_EXPLICIT_SIGNALS)
-    if explicit_tier_1:
-        return TierAssessment(
-            TIER_1,
-            _reason("이너젠 핵심 기후·GHG·ETS 컨설팅 신호", explicit_tier_1),
-            explicit_tier_1,
-        )
+    work = _signals(text, TIER_1_WORK)
+    if work:
+        signals = tuple(dict.fromkeys((*domain, *work)))
+        return TierAssessment(TIER_1, _reason("이너젠 직접 수행 컨설팅·기획 과업", signals), signals)
 
-    tier_2_support = _signals(text, TIER_2_SUPPORT_SIGNALS)
-    if tier_2_domain and tier_2_support:
-        signals = _combined_signals(tier_2_domain, tier_2_support)
-        return TierAssessment(
-            TIER_2,
-            _reason("기후·환경 관련 설비·시설·기술 지원 사업 신호", signals),
-            signals,
-        )
-
-    tier_2_referral = _signals(text, TIER_2_REFERRAL_SIGNALS)
-    if tier_2_domain and tier_2_referral:
-        signals = _combined_signals(tier_2_domain, tier_2_referral)
-        return TierAssessment(
-            TIER_2,
-            _reason("이너젠 핵심 범위 밖 환경 컨설팅·고객사 추천 신호", signals),
-            signals,
-        )
-
-    tier_1_domain = _signals(text, TIER_1_DOMAIN_SIGNALS)
-    if tier_1_domain and tier_1_work:
-        signals = _combined_signals(tier_1_domain, tier_1_work)
-        return TierAssessment(
-            TIER_1,
-            _reason("기후·탄소 주제의 컨설팅·분석·연구 업무 신호", signals),
-            signals,
-        )
-
-    return TierAssessment(
-        TIER_3,
-        "이너젠 직접 컨설팅 또는 고객사 설비 지원 신호를 제목에서 확인하지 못함",
-    )
+    return TierAssessment(TIER_3, "제외: 직접 컨설팅 과업 또는 고객사 지원 근거 없음")

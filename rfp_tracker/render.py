@@ -69,7 +69,7 @@ def render_dashboard(rows: list, out_path: str | Path) -> None:
     .tier {{ display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; }}
     .tier-tier_1 {{ background: #d5f5e3; color: #145a32; }}
     .tier-tier_2 {{ background: #fcf3cf; color: #7d6608; }}
-    .tier-tier_3, .tier-unclassified {{ background: #ecf0f1; color: #566573; }}
+    .tier-unclassified {{ background: #ecf0f1; color: #566573; }}
     .tier-reason {{ display: inline-block; margin-top: 5px; color: #5d6d7e; font-size: 12px; line-height: 1.4; max-width: 220px; }}
     a {{ color: #1f618d; }}
   </style>
@@ -116,7 +116,6 @@ def render_dashboard(rows: list, out_path: str | Path) -> None:
 WORKBENCH_TIER_LABELS = {
     "tier_1": "Tier 1",
     "tier_2": "Tier 2",
-    "tier_3": "Tier 3",
     "unclassified": "미분류",
 }
 
@@ -303,7 +302,7 @@ def _deadline_priority_badge(priority: str) -> str:
 
 
 def _new_notice_rows(notices: list[dict[str, object]]) -> str:
-    tier_order = {"tier_1": 0, "tier_2": 1, "tier_3": 2, "unclassified": 3}
+    tier_order = {"tier_1": 0, "tier_2": 1}
     ordered = sorted(
         notices,
         key=lambda item: (
@@ -372,7 +371,6 @@ def render_workbench_dashboard(
         ("현재 접수 중", summary.get("active_notices", 0), "blue"),
         ("현재 접수 중 Tier 1", summary.get("active_tier_1", 0), "green"),
         ("현재 접수 중 Tier 2", summary.get("active_tier_2", 0), "amber"),
-        ("Tier 3", summary.get("tier_3", 0), "gray"),
         ("D-7 중요 마감", summary.get("deadline_d7", 0), "amber"),
         ("D-3 중요 마감", summary.get("deadline_d3", 0), "red"),
         ("공개 원문 추출 완료", summary.get("extracted_documents", 0), "blue"),
@@ -587,7 +585,7 @@ def render_workbench_dashboard(
     .tier-badge, .review-badge, .document-status {{ display: inline-block; padding: 4px 7px; border: 1px solid transparent; border-radius: 3px; font-size: 12px; font-weight: 700; }}
     .tier-tier_1 {{ background: var(--green); color: #205D36; border-color: #9FCBAE; }}
     .tier-tier_2 {{ background: var(--amber); color: #7B5510; border-color: #E7C66C; }}
-    .tier-tier_3, .tier-unclassified {{ background: #EDF1F5; color: #4A5568; border-color: #CCD6E0; }}
+    .tier-unclassified {{ background: #EDF1F5; color: #4A5568; border-color: #CCD6E0; }}
     .review-badge {{ background: #EDF2F7; color: #4A5568; border-color: #D2DCE7; }}
     .status-extracted {{ background: var(--green); color: #205D36; border-color: #9FCBAE; }}
     .status-missing_document_url, .status-download_failed, .status-parse_failed {{ background: var(--red); color: #8A2A26; border-color: #E2AAA5; }}
@@ -617,7 +615,7 @@ def render_workbench_dashboard(
     <header class="masthead">
       <p class="eyebrow">INNERGEN CLIMATE INTELLIGENCE</p>
       <h1>나라장터 전체 현재입찰 · 기후·온실가스 공고 작업대</h1>
-      <p>나라장터 용역·물품·공사·외자 전체의 현재 접수 공고를 포함합니다. Tier 1·2를 우선 검토하고 Tier 3는 분류 참고용으로 확인하세요. D-7/D-3 수치는 모든 수집 공고 기준입니다. 자동 요약은 공개 원문에서만 만들며, 최종 입찰 판단은 담당자가 원문으로 확인해야 합니다.</p>
+      <p>나라장터 및 공식 출처의 이너젠 직접 컨설팅(Tier 1)과 고객사 설비·금융지원(Tier 2) 공고만 표시합니다. D-7/D-3 수치는 표시 대상 공고 기준입니다. 자동 요약은 공개 원문에서만 만들며, 최종 입찰 판단은 담당자가 원문으로 확인해야 합니다.</p>
     </header>
     <section class="kpis">{card_html}</section>
     <section class="panel priority-panel">
@@ -634,7 +632,7 @@ def render_workbench_dashboard(
     <section class="panel">
       <div class="filter-grid">
         <div><label for="search">통합 검색</label><input id="search" placeholder="공고명, 기관, 키워드, 과업 요약"></div>
-        <div><label for="tier">Tier</label><select id="tier"><option value="">전체</option><option value="tier_1">Tier 1</option><option value="tier_2">Tier 2</option><option value="tier_3">Tier 3</option></select></div>
+        <div><label for="tier">Tier</label><select id="tier"><option value="">전체</option><option value="tier_1">Tier 1</option><option value="tier_2">Tier 2</option></select></div>
         <div><label for="active">접수 상태</label><select id="active"><option value="">전체</option><option value="active">현재 접수 중</option><option value="inactive">마감 경과·확인 필요</option></select></div>
         <div><label for="priority">우선 검토</label><select id="priority"><option value="">전체</option><option value="official_tier_1">Tier 1 공식 우선</option></select></div>
         <div><label for="deadline-priority">중요 마감</label><select id="deadline-priority"><option value="">전체</option><option value="D-7">D-7</option><option value="D-3">D-3</option></select></div>
@@ -708,6 +706,7 @@ def _render_public_workbench_dashboard(payload: dict[str, object], path: Path) -
         list(payload.get("notices") or []),
         key=lambda item: (
             0 if item.get("is_active") else 1,
+            0 if item.get("business_tier") == "tier_1" else 1,
             str(item.get("deadline_at") or "9999-12-31"),
             int(item.get("id") or 0),
         ),
@@ -722,7 +721,8 @@ def _render_public_workbench_dashboard(payload: dict[str, object], path: Path) -
     new_tier_1_items = [item for item in notices if item.get("is_new_tier_1")]
     cards = [
         ("오늘 신규 Tier 1", len(new_tier_1_items), "focus", "#new-tier1"),
-        ("현재 접수 중", summary.get("active_notices", 0), "active", "#notice-list"),
+        ("접수 중 Tier 1", summary.get("active_tier_1", 0), "active", "#notice-list"),
+        ("접수 중 Tier 2", summary.get("active_tier_2", 0), "support", "#notice-list"),
         ("D-7 · D-3 중요 마감", int(summary.get("deadline_d7", 0)) + int(summary.get("deadline_d3", 0)), "urgent", "#notice-list"),
     ]
     card_html = "".join(
@@ -731,6 +731,8 @@ def _render_public_workbench_dashboard(payload: dict[str, object], path: Path) -
     )
     rows: list[str] = []
     for notice in notices:
+        tier = str(notice.get("business_tier") or "")
+        tier_label_text = "Tier 1 · 직접 컨설팅" if tier == "tier_1" else "Tier 2 · 고객사 지원"
         source_name = str(notice.get("source_name") or "")
         status = str(notice.get("document_status") or "not_attempted")
         deadline = str(notice.get("deadline_at") or "")
@@ -754,8 +756,8 @@ def _render_public_workbench_dashboard(payload: dict[str, object], path: Path) -
             budget_html = html.escape(str(notice["budget"]))
         rows.append(
             f"""
-            <tr id="notice-{int(notice['id'])}" class="notice-row" data-active="{'active' if notice.get('is_active') else 'inactive'}" data-source="{html.escape(source_name, quote=True)}" data-document="{html.escape(status, quote=True)}" data-deadline-priority="{html.escape(deadline_priority, quote=True)}" data-deadline="{html.escape(deadline[:10], quote=True)}" data-search="{html.escape(search_text, quote=True)}">
-              <td data-label="공고" class="title"><div class="notice-title">{_external_link(notice.get('url'), notice.get('title'))}</div><div class="meta">{html.escape(source_name)} · {html.escape(str(notice.get('published_at') or '공고일 미수집'))}</div></td>
+            <tr id="notice-{int(notice['id'])}" class="notice-row" data-tier="{html.escape(tier, quote=True)}" data-active="{'active' if notice.get('is_active') else 'inactive'}" data-source="{html.escape(source_name, quote=True)}" data-document="{html.escape(status, quote=True)}" data-deadline-priority="{html.escape(deadline_priority, quote=True)}" data-deadline="{html.escape(deadline[:10], quote=True)}" data-search="{html.escape(search_text, quote=True)}">
+              <td data-label="공고" class="title"><span class="tier-tag {html.escape(tier, quote=True)}">{tier_label_text}</span><div class="notice-title">{_external_link(notice.get('url'), notice.get('title'))}</div><div class="meta">{html.escape(source_name)} · {html.escape(str(notice.get('published_at') or '공고일 미수집'))}</div></td>
               <td data-label="발주기관">{html.escape(str(notice.get('buyer') or '미수집'))}</td>
               <td data-label="마감"><div class="deadline-cell"><span class="active-status {'active' if notice.get('is_active') else 'inactive'}">{'접수 중' if notice.get('is_active') else '접수 종료·확인'}</span>{_deadline_priority_badge(deadline_priority)}<div class="date">{html.escape(deadline or '마감일 미수집')}</div></div></td>
               <td data-label="공고 금액" class="number">{budget_html}</td>
@@ -789,7 +791,7 @@ def _render_public_workbench_dashboard(payload: dict[str, object], path: Path) -
   <header class="hero">
     <div class="eyebrow">CLIMATE PROCUREMENT INTELLIGENCE</div>
     <h1>기후·온실가스 입찰, 한눈에 검토</h1>
-    <p>오늘 새로 수집한 Tier 1 후보를 먼저 보고, 접수 중인 공고를 마감일 순으로 확인하세요. 입찰 자격과 과업범위는 공식 원문에서 최종 확인해야 합니다.</p>
+    <p>이너젠 직접 컨설팅 후보(Tier 1)와 고객사가 신청할 수 있는 설비·금융지원 모집(Tier 2)만 모았습니다. 이미 선정된 기업의 장비 구매입찰은 제외합니다. 입찰 자격과 신청 가능 여부는 공식 원문에서 확인하세요.</p>
     <div class="hero-meta"><span>나라장터 및 공식 출처</span><span>마지막 갱신 {html.escape(str(summary.get('generated_at') or '미확인'))}</span><span>공개 스냅샷</span></div>
   </header>
   <section class="kpis" aria-label="핵심 현황">{card_html}</section>
@@ -798,9 +800,10 @@ def _render_public_workbench_dashboard(payload: dict[str, object], path: Path) -
     <ul class="lead-list">{new_public_html}</ul>
   </section>
   <section id="notice-list" class="panel" aria-labelledby="list-heading">
-    <div class="section-head"><div><h2 id="list-heading">전체 공고 탐색</h2><p>현재 접수 중인 공고가 먼저 보입니다. 제목을 열면 공식 원문, 자료·상세를 펼치면 공개 RFP를 확인할 수 있습니다.</p></div></div>
+    <div class="section-head"><div><h2 id="list-heading">Tier 1·2 공고 탐색</h2><p>접수 중인 Tier 1을 먼저 보여줍니다. 제목을 열면 공식 원문, 자료·상세를 펼치면 공개 RFP를 확인할 수 있습니다.</p></div></div>
     <div class="filters" role="search">
       <div><label for="search">공고 검색</label><input id="search" type="search" placeholder="공고명·기관·과업 키워드"></div>
+      <div><label for="tier">업무 적합성</label><select id="tier"><option value="">Tier 1·2 전체</option><option value="tier_1">Tier 1 · 직접 컨설팅</option><option value="tier_2">Tier 2 · 고객사 지원</option></select></div>
       <div><label for="active">접수 상태</label><select id="active"><option value="active" selected>접수 중</option><option value="">전체</option><option value="inactive">마감 경과·확인</option></select></div>
       <div><label for="deadline-priority">중요 마감</label><select id="deadline-priority"><option value="">전체</option><option value="D-7">D-7</option><option value="D-3">D-3</option></select></div>
       <div><label for="source">출처</label><select id="source"><option value="">전체</option>{source_select}</select></div>

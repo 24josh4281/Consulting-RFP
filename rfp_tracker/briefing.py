@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 
-from .tiering import TIER_1, TIER_2, TIER_3, tier_short_label
+from .tiering import TIER_1, TIER_2, VISIBLE_BUSINESS_TIERS, tier_short_label
 from zoneinfo import ZoneInfo
 
 from .storage import list_notices
@@ -150,7 +150,12 @@ def build_briefing(
     now: datetime | None = None,
 ) -> dict[str, Any]:
     current = now or seoul_now()
-    views = [notice_view(row, current) for row in list_notices(connection)]
+    views = [
+        notice_view(row, current)
+        for row in list_notices(connection)
+        if str(row["business_tier"] or "") in VISIBLE_BUSINESS_TIERS
+        and not str(row["source_id"] or "").casefold().startswith("sample_")
+    ]
     eligible = [
         item
         for item in views
@@ -172,7 +177,7 @@ def build_briefing(
     missing_documents = [item for item in eligible if item["document_count"] == 0]
     watched = [item for item in eligible if item["review_status"] in {"watch", "interesting"}]
     high_score_missing = [item for item in missing_documents if item["relevance_score"] >= min_score + 2]
-    tier_order = {TIER_1: 0, TIER_2: 1, TIER_3: 2}
+    tier_order = {TIER_1: 0, TIER_2: 1}
     action_queue = sorted(
         _deduplicate(urgent + today_new + high_score_missing + watched),
         key=lambda item: (
@@ -196,7 +201,6 @@ def build_briefing(
             "watching": len(watched),
             "tier_1": sum(1 for item in eligible if item["business_tier"] == TIER_1),
             "tier_2": sum(1 for item in eligible if item["business_tier"] == TIER_2),
-            "tier_3": sum(1 for item in eligible if item["business_tier"] == TIER_3),
         },
         "action_queue": action_queue,
         "new_today": today_new[:limit],
@@ -238,9 +242,9 @@ def briefing_markdown(briefing: dict[str, Any]) -> str:
         "",
         "## 오늘의 요약",
         "",
-        "| 전체 | 기준점수 이상 | Tier 1 | Tier 2 | Tier 3 | 오늘 수집 | D-{} 이내 | 문서 미수집 |".format(briefing["due_days"]),
-        "|---:|---:|---:|---:|---:|---:|---:|---:|",
-        "| {total_notices} | {eligible_notices} | {tier_1} | {tier_2} | {tier_3} | {new_today} | {urgent} | {missing_documents} |".format(**summary),
+        "| 전체 | 기준점수 이상 | Tier 1 | Tier 2 | 오늘 수집 | D-{} 이내 | 문서 미수집 |".format(briefing["due_days"]),
+        "|---:|---:|---:|---:|---:|---:|---:|",
+        "| {total_notices} | {eligible_notices} | {tier_1} | {tier_2} | {new_today} | {urgent} | {missing_documents} |".format(**summary),
         "",
         "## 우선 확인 공고",
         "",
@@ -326,7 +330,6 @@ def briefing_html(briefing: dict[str, Any]) -> str:
             ("기준점수 이상", summary["eligible_notices"]),
             ("Tier 1", summary["tier_1"]),
             ("Tier 2", summary["tier_2"]),
-            ("Tier 3", summary["tier_3"]),
             ("오늘 수집", summary["new_today"]),
             (f"D-{briefing['due_days']} 이내", summary["urgent"]),
             ("문서 미수집", summary["missing_documents"]),

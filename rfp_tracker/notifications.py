@@ -25,7 +25,7 @@ from .storage import (
     record_notification_delivery,
     set_notification_setting,
 )
-from .tiering import TIER_1, TIER_2, TIER_3, UNCLASSIFIED, tier_label, tier_short_label
+from .tiering import TIER_1, TIER_2, UNCLASSIFIED, tier_label, tier_short_label
 
 
 BASELINE_SETTING = "notification_baseline_at"
@@ -131,7 +131,8 @@ def _active_notice_rows(connection: Any, current: datetime) -> list[Any]:
     return [
         row
         for row in list_notices(connection)
-        if str(row["review_status"] or "") not in {"not_relevant", "closed"}
+        if not str(row["source_id"] or "").casefold().startswith("sample_")
+        and str(row["review_status"] or "") not in {"not_relevant", "closed"}
         and is_notice_active(row, current)
     ]
 
@@ -229,17 +230,10 @@ TIER_SECTIONS = (
     ),
     (
         TIER_2,
-        "Tier 2 · 고객사 추천 가능 사업",
-        "기후·환경 설비, 시설, 시스템 또는 기술 지원으로 고객사 추천 가능성을 확인할 공고입니다.",
+        "Tier 2 · 고객사 설비·금융지원 추천",
+        "고객사가 신청할 수 있는 온실가스 감축·환경설비 보조금, 융자, 금리 또는 설비 지원 모집 공고입니다.",
         "#9A6700",
         "#FFF6DB",
-    ),
-    (
-        TIER_3,
-        "Tier 3 · 참고 / 직접 컨설팅 비적합",
-        "관련 키워드는 있으나 행사·투자·영상·순수 과학 등 이너젠 직접 컨설팅과 거리가 있는 공고입니다.",
-        "#5B6470",
-        "#F1F3F5",
     ),
 )
 
@@ -481,16 +475,6 @@ def _newsletter_html(
             '</td></tr>'
         )
 
-    if include_all_tiers and grouped[UNCLASSIFIED]:
-        sections_html.append(
-            '<tr><td style="padding:0 0 22px 0;">'
-            '<div style="border-left:5px solid #6B7280;padding:2px 0 2px 10px;margin:0 0 8px 0;">'
-            f'<div style="font-size:16px;font-weight:800;color:#374151;">미분류 · 원문 확인 필요 <span style="font-size:13px;font-weight:600;color:#4B5563;">{len(grouped[UNCLASSIFIED])}건</span></div>'
-            '<div style="font-size:12px;color:#4B5563;line-height:1.5;margin-top:3px;">자동 Tier 근거가 부족한 공고입니다. 원문을 확인한 뒤 수동 보정하세요.</div></div>'
-            f'{_notice_table(grouped[UNCLASSIFIED], UNCLASSIFIED, "#6B7280", "#F3F4F6")}'
-            '</td></tr>'
-        )
-
     generated_label = generated_at.strftime("%Y-%m-%d %H:%M KST")
     safe_dashboard_url = html.escape(dashboard_url, quote=True)
     return f"""<!doctype html>
@@ -529,6 +513,10 @@ def _email_payload(
     deadline_alerts: list[dict[str, Any]] | None = None,
     dashboard_url: str = PUBLIC_DASHBOARD_URL,
 ) -> EmailPayload | None:
+    items = [item for item in items if item.get("business_tier") in {TIER_1, TIER_2}]
+    deadline_alerts = [
+        item for item in (deadline_alerts or []) if item.get("business_tier") in {TIER_1, TIER_2}
+    ]
     date_label = now.strftime("%Y-%m-%d")
     if mode == "immediate" and not items:
         return None
@@ -584,8 +572,6 @@ def _email_payload(
         sections = TIER_SECTIONS if mode == "weekly" else (TIER_SECTIONS[0],)
         for tier, title, description, _accent, _tint in sections:
             text_lines.extend([f"[{title}] {len(grouped[tier])}건", description, *_notice_lines(grouped[tier]), ""])
-        if mode == "weekly" and grouped[UNCLASSIFIED]:
-            text_lines.extend(["[미분류 · 원문 확인 필요]", *_notice_lines(grouped[UNCLASSIFIED]), ""])
     text_lines.extend(["대시보드에서 한 번에 확인: " + dashboard_url, ""])
     text_lines.append("원문과 첨부 RFP/과업지시서를 확인한 뒤 입찰 가능 여부를 판단하세요.")
     text = "\n".join(text_lines)
@@ -615,7 +601,7 @@ def _email_payload(
             '<table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td style="padding:0 26px 22px 26px;">'
             '<div style="border-left:5px solid #C53030;padding:2px 0 2px 10px;margin:0 0 8px 0;">'
             f'<div style="font-size:16px;font-weight:800;color:#8A2A26;">D-7 / D-3 중요 마감 <span style="font-size:13px;color:#4B5563;">{len(deadline_alerts)}건</span></div>'
-            '<div style="font-size:12px;color:#4B5563;line-height:1.5;margin-top:3px;">Tier 1/2 공고 중 마감일까지 정확히 7일 또는 3일 남은 건입니다. Tier 3도 공고 목록에서 마감 배지로 확인할 수 있습니다.</div></div>'
+            '<div style="font-size:12px;color:#4B5563;line-height:1.5;margin-top:3px;">Tier 1/2 공고 중 마감일까지 정확히 7일 또는 3일 남은 건입니다.</div></div>'
             f'{"".join(alert_sections)}</td></tr></table>'
         )
         footer_marker = '<tr><td style="padding:16px 26px 22px 26px;background:#F8FAF9;'
@@ -716,6 +702,7 @@ def dispatch_notifications(
                     business_tiers=(TIER_1,),
                 )
                 if _notice_is_not_historical(row, baseline_at)
+                and not str(row["source_id"] or "").casefold().startswith("sample_")
             ]
             payload = _email_payload(mode, items, current, dashboard_url=dashboard_url)
         elif mode in {"daily", "weekly"}:
@@ -728,10 +715,7 @@ def dispatch_notifications(
                 results.append(DispatchResult(recipient=recipient, mode=mode, skipped=1, message="이미 발송된 집계 기간입니다."))
                 continue
             active_items = [notice_view(row, current) for row in _active_notice_rows(connection, current)]
-            items = (
-                [item for item in active_items if item["business_tier"] in {TIER_1, TIER_2}]
-                if mode == "daily" else active_items
-            )
+            items = [item for item in active_items if item["business_tier"] in {TIER_1, TIER_2}]
             deadline_alerts = (
                 [item for item in active_items if item["deadline_priority"] and item["business_tier"] in {TIER_1, TIER_2}]
                 if mode == "weekly" else []

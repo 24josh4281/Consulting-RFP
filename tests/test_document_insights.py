@@ -61,11 +61,14 @@ class DocumentInsightTests(unittest.TestCase):
             featured = rendered.split('<ul class="lead-list">', 1)[1].split("</ul>", 1)[0]
 
             self.assertEqual(public["summary"]["new_tier_1_today"], 1)
+            self.assertEqual(public["summary"]["total_notices"], 2)
             self.assertIn("신규 Scope 3 산정 컨설팅", featured)
             self.assertNotIn("신규 온실가스 설비 지원", featured)
             self.assertNotIn("신규 기후 영상 제작", featured)
             self.assertIn("신규 온실가스 설비 지원", rendered)
+            self.assertNotIn("신규 기후 영상 제작", rendered)
             self.assertNotIn("INTERNAL-TIER-REASON", rendered)
+            self.assertIn('id="tier"', rendered)
             self.assertIn('id="result-count"', rendered)
             self.assertIn('id="more"', rendered)
             connection.close()
@@ -197,6 +200,7 @@ class DocumentInsightTests(unittest.TestCase):
             after = next(row for row in list_notices(connection) if row["external_id"] == "official-1")
             internal = build_workbench_payload(connection)
             public = build_public_workbench_payload(connection)
+            self.assertEqual(len(internal["notices"]), 1)
             internal_path = root / "internal.html"
             public_path = root / "public.html"
             render_workbench_dashboard(internal, internal_path)

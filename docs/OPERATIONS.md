@@ -8,6 +8,8 @@ PowerShell에서 아래처럼 실행합니다.
 powershell -ExecutionPolicy Bypass -File .\scripts\run_tracker.ps1 -Days 14
 ```
 
+수집 직후 자동 Tier를 현재 이너젠 업무범위 기준으로 다시 점검합니다. 기존 공고 원문과 사람이 수동 지정한 Tier는 유지하며, Tier 3은 이력 보존용으로만 남고 화면·메일·Excel에는 표시하지 않습니다.
+
 결과물:
 
 - `data/rfp_tracker.db`
@@ -218,7 +220,7 @@ python -m rfp_tracker sources --config configs\sources.local.json
 ```
 
 - GIR 공개 입찰 게시판은 현재 상세 공고와 공개 RFP/과업 문서 링크 연결까지 확인되었습니다.
-- 나라장터는 서비스키가 있어야 API 수집을 시작합니다. 활성화 시 용역 공고를 환경·기후·온실가스·배출권·ETS·LCA·탄소발자국·환경영향평가 기준으로 필터링합니다.
+- 나라장터는 서비스키가 있어야 API 수집을 시작합니다. 용역·물품·공사·외자 전체 현재 공고를 조회하되, 제목이 이너젠 직접 컨설팅(Tier 1) 또는 고객사 설비·금융지원(Tier 2)에 맞는 경우만 새로 저장합니다. 과거 제외 기록은 보존하고 대시보드·메일·엑셀에는 표시하지 않습니다.
 - 환경부 및 민간 포털은 이용 정책과 페이지 구조 검토 전까지 비활성화로 둡니다.
 - 출처 전체 현황은 `docs/SOURCE_CATALOG_STATUS.md`를 확인하세요.
 

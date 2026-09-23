@@ -83,7 +83,7 @@ function text(value) {
 
 
 function prioritizedNotices(notices) {
-  const tierRank = { tier_1: 0, tier_2: 1, tier_3: 2, unclassified: 3 };
+  const tierRank = { tier_1: 0, tier_2: 1 };
   const deadlineRank = { "D-3": 0, "D-7": 1 };
   return [...notices].sort((left, right) => {
     const activeDifference = Number(Boolean(right.is_active)) - Number(Boolean(left.is_active));
@@ -124,7 +124,6 @@ function tierLabel(value) {
   return {
     tier_1: "Tier 1",
     tier_2: "Tier 2",
-    tier_3: "Tier 3",
     unclassified: "미분류",
   }[text(value)] || text(value);
 }
@@ -396,7 +395,7 @@ function buildDashboard(sheet, notices, documents) {
   writeHeading(
     sheet,
     "기후·온실가스·배출권거래제 공고 검토 대시보드",
-    "나라장터 4개 유형의 관련 공고를 포함합니다. 현재 접수 중 공고와 Tier 1·2를 우선 검토하세요. D-7/D-3는 전체 범위 기준입니다.",
+    "나라장터 및 공식 출처의 직접 컨설팅(Tier 1)과 고객사 설비·금융지원(Tier 2) 공고만 표시합니다.",
     15,
   );
   const noticeEnd = Math.max(7, notices.length + 6);
@@ -409,8 +408,8 @@ function buildDashboard(sheet, notices, documents) {
   addCard(sheet, 12, "오늘 신규 추가", "=COUNTA('신규공고'!$A$7:$A$" + newNoticeEnd + ")", COLORS.paleAmber);
 
   sheet.getRange("A9:A10").values = [["D-7 중요 마감"], ["D-3 중요 마감"]];
-  sheet.getRange("B9").formulas = [["=COUNTIFS('공고목록'!$J$7:$J$" + noticeEnd + ",\"D-7\")"]];
-  sheet.getRange("B10").formulas = [["=COUNTIFS('공고목록'!$J$7:$J$" + noticeEnd + ",\"D-3\")"]];
+  sheet.getRange("B9").formulas = [["=COUNTIFS('공고목록'!$K$7:$K$" + noticeEnd + ",\"D-7\")"]];
+  sheet.getRange("B10").formulas = [["=COUNTIFS('공고목록'!$K$7:$K$" + noticeEnd + ",\"D-3\")"]];
   sheet.getRange("A9:B10").format = {
     borders: { preset: "all", style: "thin", color: COLORS.line },
     verticalAlignment: "center",
@@ -419,16 +418,16 @@ function buildDashboard(sheet, notices, documents) {
   sheet.getRange("B9:B10").setNumberFormat("#,##0");
 
   const tierHeaders = ["Tier", "공고 수", "공개 문서 추출 완료"];
-  const tierRows = [["Tier 1"], ["Tier 2"], ["Tier 3"]];
+  const tierRows = [["Tier 1"], ["Tier 2"]];
   sheet.getRange("A11:C11").values = [tierHeaders];
-  sheet.getRange("A12:A14").values = tierRows;
+  sheet.getRange("A12:A13").values = tierRows;
   sheet.getRange("B12").formulas = [["=COUNTIFS('공고목록'!$B$7:$B$" + noticeEnd + ",A12)"]];
-  sheet.getRange("B12:B14").fillDown();
+  sheet.getRange("B12:B13").fillDown();
   sheet.getRange("C12").formulas = [["=COUNTIFS('문서요약'!$B$7:$B$" + documentEnd + ",A12,'문서요약'!$G$7:$G$" + documentEnd + ",\"공개 원문 추출 완료\")"]];
-  sheet.getRange("C12:C14").fillDown();
-  styleTable(sheet, "A11:C11", "A12:C14", "TierSummaryTable");
-  sheet.getRange("B12:C14").setNumberFormat("#,##0");
-  const chart = sheet.charts.add("bar", sheet.getRange("A11:B14"));
+  sheet.getRange("C12:C13").fillDown();
+  styleTable(sheet, "A11:C11", "A12:C13", "TierSummaryTable");
+  sheet.getRange("B12:C13").setNumberFormat("#,##0");
+  const chart = sheet.charts.add("bar", sheet.getRange("A11:B13"));
   chart.title = "Tier별 공고 수";
   chart.titleTextStyle.typeface = FONT;
   chart.titleTextStyle.fontSize = 12;

@@ -65,7 +65,7 @@ from .storage import (
     upsert_bid_fit_review,
     upsert_notice,
 )
-from .tiering import VALID_BUSINESS_TIERS, assess_innergen_tier, tier_label
+from .tiering import VALID_BUSINESS_TIERS, VISIBLE_BUSINESS_TIERS, assess_innergen_tier, tier_label
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -137,7 +137,14 @@ def reconcile_open_g2b_command(args: argparse.Namespace) -> int:
             )
             print(f"[reconcile] {source['id']}: 현재 유효 후보 {len(notices)}건")
             for notice in notices:
-                assessment = assess_innergen_tier(notice.title, category=notice.category)
+                assessment = assess_innergen_tier(
+                    notice.title,
+                    category=notice.category,
+                    buyer=notice.buyer,
+                    procurement_method=notice.procurement_method,
+                )
+                if assessment.tier not in VISIBLE_BUSINESS_TIERS:
+                    continue
                 notice.business_tier = assessment.tier
                 notice.tier_reason = assessment.reason
                 notice.tier_source = "automatic"
@@ -191,18 +198,24 @@ def sync_command(args: argparse.Namespace) -> int:
             fetcher = build_fetcher(source, keyword_config, global_config, ROOT_DIR)
             notices = fetcher.fetch(days=args.days)
             print(f"[sync] {source['id']}: 후보 {len(notices)}건")
+            accepted_notices = []
             for notice in notices:
                 assessment = assess_innergen_tier(
                     notice.title,
                     category=notice.category,
+                    buyer=notice.buyer,
+                    procurement_method=notice.procurement_method,
                 )
+                if assessment.tier not in VISIBLE_BUSINESS_TIERS:
+                    continue
+                accepted_notices.append(notice)
                 notice.business_tier = assessment.tier
                 notice.tier_reason = assessment.reason
                 notice.tier_source = "automatic"
                 inserted = upsert_notice(connection, notice)
                 if inserted:
                     inserted_count += 1
-            all_notices.extend(notices)
+            all_notices.extend(accepted_notices)
     except Exception as exc:  # noqa: BLE001 - CLI는 사용자에게 명확히 보여주는 것이 중요합니다.
         status = "failed"
         message = str(exc)
@@ -280,7 +293,11 @@ def export_workbench_json_command(args: argparse.Namespace) -> int:
 
 def export_csv_command(args: argparse.Namespace) -> int:
     connection = connect(args.db)
-    rows = list_notices(connection)
+    rows = [
+        row for row in list_notices(connection)
+        if str(row["business_tier"] or "") in VISIBLE_BUSINESS_TIERS
+        and not str(row["source_id"] or "").casefold().startswith("sample_")
+    ]
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", encoding="utf-8-sig", newline="") as file:
@@ -377,6 +394,11 @@ def render_documents_command(args: argparse.Namespace) -> int:
         include_missing=False,
         readable_only=True,
     )
+    rows = [
+        row for row in rows
+        if str(row["business_tier"] or "") in VISIBLE_BUSINESS_TIERS
+        and not str(row["source_id"] or "").casefold().startswith("sample_")
+    ]
     render_documents_report(rows, args.html)
     write_documents_csv(rows, args.csv)
     print(f"[done] RFP document HTML: {args.html} ({len(rows)} rows)")
@@ -663,6 +685,8 @@ def tier_audit_command(args: argparse.Namespace) -> int:
         assessment = assess_innergen_tier(
             str(row["title"] or ""),
             category=str(row["category"] or ""),
+            buyer=str(row["buyer"] or ""),
+            procurement_method=str(row["procurement_method"] or ""),
         )
         counts[assessment.tier] = counts.get(assessment.tier, 0) + 1
         is_changed = (

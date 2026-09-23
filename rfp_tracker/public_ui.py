@@ -16,9 +16,9 @@ a { color:#0a5c69; } a:hover { text-decoration:underline; }
 .hero h1 { max-width:760px; margin:9px 0 8px; font-size:clamp(25px,3vw,36px); line-height:1.23; }
 .hero p { max-width:830px; margin:0; color:#e1f1eb; }
 .hero-meta { display:flex; flex-wrap:wrap; gap:8px 20px; margin-top:17px; font-size:12px; color:#d2e8e1; }
-.kpis { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin:16px 0; }
+.kpis { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin:16px 0; }
 .kpi { display:flex; flex-direction:column; min-height:118px; padding:16px 20px; background:#fff; border:1px solid var(--line); border-left:5px solid var(--accent); border-radius:12px; color:var(--ink); text-decoration:none; }
-.kpi.focus { border-left-color:#176d63; } .kpi.urgent { border-left-color:#ac5c24; }
+.kpi.focus { border-left-color:#176d63; } .kpi.support { border-left-color:#a06a1d; } .kpi.urgent { border-left-color:#ac5c24; }
 .kpi span { font-size:13px; font-weight:700; color:#35545a; }
 .kpi strong { font-size:30px; line-height:1.2; margin-top:3px; font-variant-numeric:tabular-nums; }
 .kpi small { color:#0b6257; margin-top:auto; font-weight:700; }
@@ -35,7 +35,7 @@ h2 { margin:0; font-size:21px; line-height:1.3; } .section-head p { margin:5px 0
 .lead-card dt { color:var(--muted); } .lead-card dd { margin:0; font-weight:700; }
 .detail-link { display:inline-block; margin-top:11px; font-size:12px; font-weight:700; }
 .empty-lead { grid-column:1/-1; padding:20px; border:1px dashed #abcac2; border-radius:10px; background:#f7fbfa; color:#35545a; }
-.filters { display:grid; grid-template-columns:minmax(260px,2fr) repeat(3,minmax(135px,1fr)); gap:10px; align-items:end; }
+.filters { display:grid; grid-template-columns:minmax(220px,2fr) repeat(4,minmax(125px,1fr)); gap:10px; align-items:end; }
 label { display:block; margin-bottom:5px; color:#35545a; font-size:12px; font-weight:800; }
 input,select,button { min-height:42px; width:100%; padding:9px 11px; border:1px solid #aabec0; border-radius:8px; background:#fff; color:var(--ink); font:inherit; }
 button { cursor:pointer; } .filter-actions { display:flex; align-items:center; gap:12px; margin:12px 0 0; }
@@ -51,6 +51,8 @@ td { border-top:1px solid var(--line); padding:12px 13px; vertical-align:top; fo
 tr:nth-child(even) td { background:#fbfdfc; } tr:hover td { background:#f2f8f6; }
 tr[hidden], [hidden] { display:none !important; }
 .notice-title { font-size:14px; font-weight:750; line-height:1.45; } .notice-title a { color:#143d46; text-decoration:none; } .notice-title a:hover { text-decoration:underline; }
+.tier-tag { display:inline-block; margin-bottom:7px; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:800; }
+.tier-tag.tier_1 { background:#e6f4ec; color:#206642; } .tier-tag.tier_2 { background:#fff3de; color:#80561b; }
 .meta { color:var(--muted); font-size:12px; margin-top:5px; } .number { text-align:right; font-variant-numeric:tabular-nums; font-weight:700; }
 .date { margin-top:6px; font-variant-numeric:tabular-nums; }
 .active-status,.deadline-priority { display:inline-block; padding:2px 7px; border-radius:6px; font-size:11px; font-weight:800; white-space:nowrap; }
@@ -62,10 +64,10 @@ tr[hidden], [hidden] { display:none !important; }
 .document-header { display:flex; flex-wrap:wrap; gap:5px 9px; } .muted,.amount span { color:var(--muted); }
 .more { display:block; width:auto; margin:17px auto 0; border-color:#0b6257; color:#0b6257; font-weight:800; }
 .footnote { margin:20px 0 0; color:var(--muted); font-size:12px; }
-@media (max-width:900px) { .filters { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media (max-width:900px) { .filters { grid-template-columns:repeat(2,minmax(0,1fr)); } .kpis { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 @media (max-width:760px) {
   .shell { padding:12px 12px 42px; } .hero { padding:24px 20px; border-radius:14px; }
-  .kpis { grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; } .kpi { padding:11px; min-height:104px; }
+  .kpis { grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; } .kpi { padding:11px; min-height:104px; }
   .kpi span { font-size:11px; } .kpi strong { font-size:24px; } .kpi small { font-size:10px; }
   .panel { padding:16px; } .filters { grid-template-columns:1fr; }
   .table-wrap { border:0; overflow:visible; } table { min-width:0; } thead { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; }
@@ -75,24 +77,26 @@ tr[hidden], [hidden] { display:none !important; }
   td.title { display:block; border-top:0; } td.title::before { display:none; } .number { text-align:left; }
   .docs { width:100%; } tr:nth-child(even) td { background:#fff; }
 }
-@media (max-width:430px) { .kpis { grid-template-columns:1fr 1fr; } .kpi.urgent { grid-column:1/-1; min-height:80px; } }
+@media (max-width:430px) { .kpis { grid-template-columns:1fr 1fr; } }
 """
 
 PUBLIC_DASHBOARD_JS = """
 const rows = Array.from(document.querySelectorAll('.notice-row'));
-const controls = ['search','active','deadline-priority','source','document','deadline'].map(id => document.getElementById(id));
+const controls = ['search','tier','active','deadline-priority','source','document','deadline'].map(id => document.getElementById(id));
 const resultCount = document.getElementById('result-count');
 const empty = document.getElementById('empty');
 const more = document.getElementById('more');
 let limit = 25;
 function matches(row) {
   const query = document.getElementById('search').value.trim().toLocaleLowerCase();
+  const tier = document.getElementById('tier').value;
   const active = document.getElementById('active').value;
   const priority = document.getElementById('deadline-priority').value;
   const source = document.getElementById('source').value;
   const documentStatus = document.getElementById('document').value;
   const deadline = document.getElementById('deadline').value;
   return (!query || row.dataset.search.includes(query))
+    && (!tier || row.dataset.tier === tier)
     && (!active || row.dataset.active === active)
     && (!priority || row.dataset.deadlinePriority === priority)
     && (!source || row.dataset.source === source)

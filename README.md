@@ -55,7 +55,7 @@ python -m rfp_tracker review --db data\rfp_tracker.db --id 1 --status interestin
 python -m rfp_tracker stats --db data\rfp_tracker.db
 ```
 
-`needs_review`는 공고명에 `환경` 등 넓은 신호만 있어 사람이 원문을 먼저 확인해야 하는 후보입니다. 이 상태의 행은 대시보드와 문서 인덱스에는 남지만 자동 즉시 알림·일일 브리핑에서는 제외됩니다. 관련성이 확인되면 `review --status interesting` 또는 `new`로 바꿀 수 있습니다.
+`needs_review`는 기존 DB의 과거 검토 상태로 남을 수 있습니다. 새 수집에서는 공고 제목이 아래 Tier 1/2 기준에 맞는 경우만 저장하고, 관련성이 불분명한 공고는 대시보드·메일·엑셀에 내보내지 않습니다.
 
 ## 이너젠 사업 적합 Tier
 
@@ -63,9 +63,10 @@ python -m rfp_tracker stats --db data\rfp_tracker.db
 
 | Tier | 의미 | 운영 방식 |
 |------|------|----------|
-| Tier 1 | 기후변화 산업, 온실가스 외부사업, ETS, Scope 1·2·3, 산업계 시나리오, CDP/공시·리스크 등 이너젠 직접 컨설팅 | 신규 즉시 알림 + 일일/주간 브리핑 최우선 섹션 |
-| Tier 2 | 기후·환경 관련 설비·시설·기술 지원 또는 핵심 범위 밖 환경 컨설팅 | 일일/주간 브리핑의 고객사 추천 섹션 |
-| Tier 3 | 행사·영상·투자·교육·순수 과학 또는 직접 컨설팅 근거가 부족한 공고 | 일일/주간 브리핑의 참고 섹션, 즉시 알림 제외 |
+| Tier 1 | [이너젠 공식 업무영역](https://www.inng.co.kr/) 중 온실가스 감축실적·외부사업/ITMO/자발적 감축, ETS·목표관리제·Scope 1~3 공시 대응, 탄소중립 전략, RE100/PPA 조달 관련 직접 컨설팅·평가·방법론·기획 연구 | 신규 즉시 알림 + 일일/주간 브리핑 최우선 섹션 |
+| Tier 2 | 고객사가 신청할 수 있는 온실가스 감축·저탄소·재생에너지·환경설비 도입 보조금·융자·금리·설비지원 모집 | 일일/주간 브리핑의 고객사 추천 섹션 |
+
+그 밖의 행사·영상·순수 실험·일반 시설공사·장비 구매는 제외합니다. 선정 기업이 지원사업 예산으로 진행하는 압축기·모터 등의 구매입찰은 지원사업 **신청 기회가 아니므로** Tier 2에서 제외합니다. 기존 DB의 제외 기록은 추적성을 위해 보존하지만 어떤 공고 목록·메일·엑셀에도 표시하지 않습니다. 샘플 공고도 운영 출력에서 제외합니다. 자동 분류는 최종 입찰 적합성 판단이 아닙니다.
 
 기존 공고를 안전하게 분류하고, 결과를 확인합니다.
 
@@ -102,10 +103,10 @@ python -m rfp_tracker source-toggle --source-id g2b_service_bids --enable --out 
 
 수집 범위와 운영 방식:
 
-- 용역·물품·공사·외자 4개 공식 검색 API에서 최근 공고를 반복 수집하고, 별도 일일 조회는 공고명 키워드 제한 없이 현재 접수 중 후보를 확인한 뒤 기후·온실가스·배출권·환경 도메인 신호가 있는 공고만 저장합니다. 교복·학생복·일반 의류·청소·경비 등 비관련 공고는 저장하지 않습니다.
+- 용역·물품·공사·외자 4개 공식 검색 API에서 최근 공고를 반복 수집하고, 별도 일일 조회는 공고명 키워드 제한 없이 현재 접수 중 후보를 확인한 뒤 Tier 1/2로 분류된 공고만 새로 저장합니다.
 - 전체 조회는 최근 90일을 API 허용 범위인 최대 30일 구간으로 나눠 조회하고, `totalCount`에 맞춰 페이지를 끝까지 읽습니다. 입찰 시작 전 공고와 마감이 지난 공고는 제외합니다.
-- 일일 전체 조회는 최대 500 API 요청, 구간별 최대 100페이지로 안전 제한합니다. 후보 중 입찰 시작 전·마감 후 공고는 제외하고, 도메인 필터를 통과한 공고만 DB에 남깁니다. 저장된 공고는 Tier 1·2·3으로 자동 분류하고 입찰 판단은 담당자가 확인해야 합니다.
-- 과업지시서 자동 다운로드·요약은 Tier 1·2에만 실행하며 Tier 3는 공식 공고·첨부 원문 링크로 확인합니다.
+- 일일 전체 조회는 최대 500 API 요청, 구간별 최대 100페이지로 안전 제한합니다. 후보 중 입찰 시작 전·마감 후 공고는 제외하고, 이너젠 사업범위에 맞는 제목만 DB에 새로 저장합니다.
+- 과업지시서 자동 다운로드·요약은 Tier 1·2에만 실행합니다.
 - 서비스키를 코드 파일에 직접 저장하지 마세요.
 - 공고 원문/RFP/과업지시서 첨부파일은 출처별로 직접 공개된 링크만 연결·검증합니다.
 - 나라장터 API 원본에 `ntceSpecDocUrl`과 파일명이 저장된 경우, 아래 backfill 명령으로 이미 수집한 공고의 공식 첨부 링크를 API 재호출 없이 복원합니다. 명시적 URL이 없는 `missing`은 RFP 부재를 뜻하지 않으므로 공식 공고의 `파일첨부`를 확인하세요.
@@ -233,7 +234,7 @@ python -m rfp_tracker export-workbench-json --db data\rfp_tracker_official.db --
 node .\scripts\build_rfp_workbench_workbook.mjs --input outputs\rfp_workbench_data.json --output outputs\rfp_workbench.xlsx
 ~~~
 
-The workbench begins with an official-source-only Tier 1 priority area; sample records remain in the full list but are not treated as real opportunities. The dashboard and Excel export expose every currently active in-scope notice. The daily email features only today's newly collected, open Tier 1 notices and retains all other open Tier 1/2 notices once; Tier 3 is absent from the daily email. The public dashboard highlights only new Tier 1 candidates, then offers a searchable, paginated list of all public source facts with RFP details on demand. Notices exactly 7 or 3 calendar days from their deadline receive D-7/D-3 priority labels. The workbook contains seven sheets: Dashboard, Notices, Document Summary, Fallback Info, New Notices, Sources, and Bid Fit Review. `신규공고` remains a complete data sheet of notices first collected today, regardless of Tier; its yellow input columns support manual bid-fit review. It stores listing and document-derived amounts separately with source basis and evidence.
+The workbench, workbook, CSV, public dashboard, and email expose only Tier 1/2 real notices. Historical excluded rows and sample records remain in SQLite for audit but are hidden from operational outputs. New Tier 1 is highlighted; all active Tier 1/2 are included in the daily email. The public dashboard offers a Tier filter and RFP details. D-7/D-3 labels are derived from the deadline. The seven-sheet workbook retains its bid-fit review and `신규공고` sheets; the latter includes only today's Tier 1/2 rows. Listing and document-derived amounts remain separate.
 
 Use the local command below when a reviewed decision should also appear in the internal dashboard. It changes only the separate bid-fit review record, never the source notice, attachment, or document evidence.
 
@@ -242,7 +243,7 @@ python -m rfp_tracker fit-review set --db data\rfp_tracker_official.db --id 12 -
 python -m rfp_tracker fit-review list --db data\rfp_tracker_official.db
 ```
 
-To make a public browser snapshot without internal Tier, reviewer, team, or bid-decision data:
+To make a public browser snapshot with only the Tier 1/2 label, without internal reasons, reviewer, team, or bid-decision data:
 
 ```powershell
 python -m rfp_tracker render-workbench --db data\rfp_tracker_official.db --out site\index.html --public
@@ -323,7 +324,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install_notification_tasks.ps
 
 Windows 작업 스케줄러 설치 스크립트의 기본 일정은 신규 공고 확인 **30분마다**, 일일 브리핑 **매일 10:00·17:00 (KST)**, 주간 브리핑 **매주 금요일 18:00 (KST)** 입니다. 현재 Codex 예약 점검은 10시·17시 일일 브리핑과 금요일 18시 주간 브리핑을 실행합니다. 두 일일 브리핑은 시간대별 발송 기록으로 중복을 방지합니다.
 
-즉시 알림은 **Tier 1**만 전송합니다. 일일 메일의 신규 영역에는 당일 처음 수집한 접수 중 **Tier 1만** 표시합니다. 나머지 접수 중 Tier 1·2는 각각 한 번씩 표시하며, 신규 Tier 2도 접수 중 Tier 2 영역에 포함됩니다. Tier 3는 일일 메일에서 제외됩니다. 주간 메일은 기존 Tier별 현황을 유지하되 신규 강조 영역은 Tier 1만 표시합니다. 일일 메일의 테두리 표에는 공고명·기관·공고 금액·마감·원문 링크를 담고, 모든 첨부·입찰방식·상세 정보는 공개 대시보드에서 확인합니다. 공개 대시보드는 신규 Tier 1만 강조하고, 전체 공식 공고는 검색·필터·25건씩 더 보기로 탐색합니다. 기본 주소는 `configs/notifications.example.json`의 `dashboard_url`을 참조하며, 로컬 설정에서 같은 항목을 바꿀 수 있습니다.
+즉시 알림은 **Tier 1**만 전송합니다. 일일 메일의 신규 영역에는 당일 처음 수집한 접수 중 **Tier 1만** 표시합니다. 나머지 접수 중 Tier 1·2는 각각 한 번씩 표시하며, 신규 Tier 2도 접수 중 Tier 2 영역에 포함됩니다. 주간 메일도 Tier 1·2만 포함하고 신규 강조 영역은 Tier 1만 표시합니다. 샘플과 제외 공고는 발송하지 않습니다. 일일 메일의 테두리 표에는 공고명·기관·공고 금액·마감·원문 링크를 담고, 모든 첨부·입찰방식·상세 정보는 공개 대시보드에서 확인합니다. 공개 대시보드는 신규 Tier 1만 강조하고, Tier 1/2 공식 공고를 검색·필터·25건씩 더 보기로 탐색합니다. 기본 주소는 `configs/notifications.example.json`의 `dashboard_url`을 참조하며, 로컬 설정에서 같은 항목을 바꿀 수 있습니다.
 
 Codex 예약 작업과 Windows 작업 스케줄러는 **둘 중 하나만** 운영합니다. 둘 다 켜면 메일은 중복 방지되지만 API·출처 확인이 중복될 수 있습니다. 이 작업공간은 Codex 예약 작업(`rfp-30`)을 사용하는 상태이므로, 별도 Windows 작업 등록은 Codex를 사용하지 않을 때만 진행하세요. 현재 Codex 예약 작업은 10시·17시 일일 메일과 금요일 18시 주간 메일을 실행하며, 30분 즉시 알림은 실행하지 않습니다.
 
