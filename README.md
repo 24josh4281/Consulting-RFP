@@ -6,6 +6,7 @@
 
 - 나라장터 용역·물품·공사·외자 입찰 중 기후·온실가스·배출권·환경 관련 현재 접수 공고 수집
 - 온실가스종합정보센터(GIR) 공개 입찰 게시판의 상세 공고·RFP 링크 연결
+- 중진공·한국환경공단·한국에너지공단의 공개 탄소중립·ETS 설비 지원사업 신청 공고 별도 수집
 - 민간 대기업/계열사 입찰 페이지용 범용 HTML 수집기
 - 기후·GHG·ETS·ESG 키워드 기반 관련성 점수화
 - 이너젠 사업 적합도 기준 Tier 1·2·3 분류 및 수동 보정
@@ -235,7 +236,7 @@ python -m rfp_tracker export-workbench-json --db data\rfp_tracker_official.db --
 node .\scripts\build_rfp_workbench_workbook.mjs --input outputs\rfp_workbench_data.json --output outputs\rfp_workbench.xlsx
 ~~~
 
-The workbench, workbook, CSV, public dashboard, and email expose only Tier 1/2 real notices. Historical excluded rows and sample records remain in SQLite for audit but are hidden from operational outputs. New Tier 1 is highlighted; all active Tier 1/2 are included in the daily email. The public dashboard offers a Tier filter and RFP details. D-7/D-3 labels are derived from the deadline. The seven-sheet workbook retains its bid-fit review and `신규공고` sheets; the latter includes only today's Tier 1/2 rows. Listing and document-derived amounts remain separate.
+The workbench and public dashboard show real Tier 1/2 notices plus climate-related Tier 3 references. Email and workbook focus on Tier 1/2. Historical excluded rows and sample records remain in SQLite for audit but are hidden from operational outputs. New Tier 1 is highlighted; all active Tier 1/2 are included in the daily email. The public dashboard distinguishes grant applications from procurement bids. D-7/D-3 labels are derived from the deadline. The seven-sheet workbook retains its bid-fit review and `신규공고` sheets; the latter includes only today's Tier 1/2 rows. Listing and document-derived amounts remain separate.
 
 Use the local command below when a reviewed decision should also appear in the internal dashboard. It changes only the separate bid-fit review record, never the source notice, attachment, or document evidence.
 
@@ -244,7 +245,7 @@ python -m rfp_tracker fit-review set --db data\rfp_tracker_official.db --id 12 -
 python -m rfp_tracker fit-review list --db data\rfp_tracker_official.db
 ```
 
-To make a public browser snapshot with only the Tier 1/2 label, without internal reasons, reviewer, team, or bid-decision data:
+To make a public browser snapshot with Tier 1/2/3 labels, but without internal reasons, reviewer, team, or bid-decision data:
 
 ```powershell
 python -m rfp_tracker render-workbench --db data\rfp_tracker_official.db --out site\index.html --public
@@ -281,11 +282,21 @@ python -m rfp_tracker sources --config configs\sources.local.json
 
 - **온실가스종합정보센터(GIR) 입찰공고**: 공개 상세 화면에서 공고일·전자입찰 여부·공개 첨부 링크를 수집합니다. 실제 제한 검증에서 기후/ETS 공고 2건과 제안요청서·입찰공고문·긴급입찰사유서 링크 총 6건을 확인했습니다. 직접 공개 HWPX는 cache에 저장해 과업 요약과 금액 근거를 추출할 수 있습니다.
 - **나라장터 입찰공고 API**: 용역·물품·공사·외자 4개 공식 API를 통해 최근 공고 및 현재 입찰 접수 중 후보를 확인합니다. 전체 조회는 공고명 키워드로 제한하지 않지만, 저장 단계에서 기후·온실가스·배출권·환경 도메인 신호와 제외어를 적용합니다. 공공데이터포털 서비스키가 있어야 실제 수집됩니다.
+- **기업 신청형 탄소중립·ETS 설비 지원사업**: [중진공 탄소중립설비투자](https://esg.kosmes.or.kr/esgplatform/bsnPuan/bsnPuanList.do?bsnDvCd=CNF&bsnTrgtCd=ETR), [한국환경공단 공고](https://www.keco.or.kr/web/lay1/bbs/S1T17C108/A/18/list.do), [한국에너지공단 ETS 설비지원](https://min24.energy.or.kr/etsg/sg/notice/list.do)·[프로젝트 경매](https://min24.energy.or.kr/etsa/ia/notice/list.do)의 공식 공개 목록·상세를 제한 조회합니다. 고객사가 신청하는 공고만 `지원금 신청`으로 표시하고, 구매입찰은 제외합니다. 신청마감일이 없거나 원문에서 마감으로 표시되면 신청 가능으로 보이지 않습니다. 지원 규모가 확인되지 않으면 숫자를 추정하지 않습니다.
 - **나라장터 발주계획·사전규격·계약과정**: 조기 신호와 공고-낙찰-계약 연결을 위한 우선 출처로 카탈로그화했습니다. 전용 어댑터는 다음 단계입니다.
 - **환경부 계약·입찰 게시판**: 공식 후보로 등록했지만, 목록 구조와 이용 정책을 별도로 확인하기 전에는 비활성화 상태입니다.
 - **민간 대기업 포털**: 로그인·협력사 권한·약관 확인이 필요한 경우가 많아 기본 비활성화 상태를 유지합니다.
 
 전체 현황과 다음 우선순위는 [docs/SOURCE_CATALOG_STATUS.md](docs/SOURCE_CATALOG_STATUS.md)에 정리했습니다.
+
+지원사업 출처만 시험 수집하려면 아래 명령을 사용합니다. 첫 명령은 운영 DB를 건드리지 않으며, 두 번째는 로컬 운영 설정에서 활성화된 지원사업 출처만 운영 DB에 저장합니다(나라장터 API 호출 없음). 운영 DB는 먼저 백업하세요.
+
+```powershell
+python -X utf8 scripts\verify_official_grants.py --days 365 --render outputs\grant_preview.html
+python -X utf8 -m rfp_tracker sync --config configs\sources.local.json --source-type official_grant_board --db data\rfp_tracker_official.db --days 365
+```
+
+2026-09-23 제한 검증에서는 7건 모두 마감되어 신청 가능한 공고는 0건이었습니다. 대시보드의 `지원사업 전체 보기`에서 과거 공고도 확인할 수 있습니다. 이후 공개 게시판에 새 신청 공고가 올라오면 정기 수집 대상이 됩니다. 이는 모든 국내 지원사업을 포괄한다는 뜻은 아닙니다.
 
 ## 이메일 알림과 매일 10:00·17:00 운영
 
@@ -325,7 +336,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install_notification_tasks.ps
 
 Windows 작업 스케줄러 설치 스크립트의 기본 일정은 신규 공고 확인 **30분마다**, 일일 브리핑 **매일 10:00·17:00 (KST)**, 주간 브리핑 **매주 금요일 18:00 (KST)** 입니다. 현재 Codex 예약 점검은 10시·17시 일일 브리핑과 금요일 18시 주간 브리핑을 실행합니다. 두 일일 브리핑은 시간대별 발송 기록으로 중복을 방지합니다.
 
-즉시 알림은 **Tier 1**만 전송합니다. 일일 메일의 신규 영역에는 당일 처음 수집한 접수 중 **Tier 1만** 표시합니다. 나머지 접수 중 Tier 1·2는 각각 한 번씩 표시하며, 신규 Tier 2도 접수 중 Tier 2 영역에 포함됩니다. 주간 메일도 Tier 1·2만 포함하고 신규 강조 영역은 Tier 1만 표시합니다. 샘플과 제외 공고는 발송하지 않습니다. 일일 메일의 테두리 표에는 공고명·기관·공고 금액·마감·원문 링크를 담고, 모든 첨부·입찰방식·상세 정보는 공개 대시보드에서 확인합니다. 공개 대시보드는 신규 Tier 1만 강조하고, Tier 1/2 공식 공고를 검색·필터·25건씩 더 보기로 탐색합니다. 기본 주소는 `configs/notifications.example.json`의 `dashboard_url`을 참조하며, 로컬 설정에서 같은 항목을 바꿀 수 있습니다.
+즉시 알림은 **Tier 1**만 전송합니다. 일일 메일의 신규 영역에는 당일 처음 수집한 접수 중 **Tier 1만** 표시합니다. 나머지 접수 중 Tier 1·2는 각각 한 번씩 표시하며, 신규 Tier 2 지원사업도 접수 중 Tier 2 영역에 포함됩니다. 주간 메일도 Tier 1·2만 포함하고 신규 강조 영역은 Tier 1만 표시합니다. 샘플과 제외 공고는 발송하지 않습니다. 일일 메일의 테두리 표에는 공고명·기관·마감·원문 링크를 담고, 입찰 금액과 지원 규모는 구분해 표시합니다. 지원 규모 미확인 시 추정값을 넣지 않습니다. 모든 첨부·입찰방식·상세 정보는 공개 대시보드에서 확인합니다. 공개 대시보드는 신규 Tier 1만 강조하고, 기후 관련 Tier 1/2/3 공식 공고를 유형·상태별로 탐색합니다. 기본 주소는 `configs/notifications.example.json`의 `dashboard_url`을 참조하며, 로컬 설정에서 같은 항목을 바꿀 수 있습니다.
 
 Codex 예약 작업과 Windows 작업 스케줄러는 **둘 중 하나만** 운영합니다. 둘 다 켜면 메일은 중복 방지되지만 API·출처 확인이 중복될 수 있습니다. 이 작업공간은 Codex 예약 작업(`rfp-30`)을 사용하는 상태이므로, 별도 Windows 작업 등록은 Codex를 사용하지 않을 때만 진행하세요. 현재 Codex 예약 작업은 10시·17시 일일 메일과 금요일 18시 주간 메일을 실행하며, 30분 즉시 알림은 실행하지 않습니다.
 

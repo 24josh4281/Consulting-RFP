@@ -22,6 +22,9 @@ a { color:#0a5c69; } a:hover { text-decoration:underline; }
 .kpi span { font-size:13px; font-weight:700; color:#35545a; }
 .kpi strong { font-size:30px; line-height:1.2; margin-top:3px; font-variant-numeric:tabular-nums; }
 .kpi small { color:#0b6257; margin-top:auto; font-weight:700; }
+.grant-callout { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:16px 20px; border:1px solid #b7d6e8; border-left:5px solid #2a7193; border-radius:12px; background:#eef8fd; }
+.grant-callout strong { display:block; color:#164e6c; font-size:16px; } .grant-callout p { margin:3px 0 0; color:#3b5b6a; font-size:13px; }
+.grant-callout button { width:auto; min-height:36px; white-space:nowrap; border-color:#8ebdd5; color:#165b7b; font-size:12px; font-weight:800; }
 .panel { background:#fff; border:1px solid var(--line); border-radius:16px; padding:24px; margin-top:16px; box-shadow:0 3px 14px rgba(15,52,50,.04); }
 .section-head { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:16px; }
 h2 { margin:0; font-size:21px; line-height:1.3; } .section-head p { margin:5px 0 0; color:var(--muted); font-size:13px; }
@@ -35,7 +38,7 @@ h2 { margin:0; font-size:21px; line-height:1.3; } .section-head p { margin:5px 0
 .lead-card dt { color:var(--muted); } .lead-card dd { margin:0; font-weight:700; }
 .detail-link { display:inline-block; margin-top:11px; font-size:12px; font-weight:700; }
 .empty-lead { grid-column:1/-1; padding:20px; border:1px dashed #abcac2; border-radius:10px; background:#f7fbfa; color:#35545a; }
-.filters { display:grid; grid-template-columns:minmax(220px,2fr) repeat(4,minmax(125px,1fr)); gap:10px; align-items:end; }
+.filters { display:grid; grid-template-columns:minmax(220px,2fr) repeat(5,minmax(125px,1fr)); gap:10px; align-items:end; }
 label { display:block; margin-bottom:5px; color:#35545a; font-size:12px; font-weight:800; }
 input,select,button { min-height:42px; width:100%; padding:9px 11px; border:1px solid #aabec0; border-radius:8px; background:#fff; color:var(--ink); font:inherit; }
 button { cursor:pointer; } .filter-actions { display:flex; align-items:center; gap:12px; margin:12px 0 0; }
@@ -53,6 +56,8 @@ tr[hidden], [hidden] { display:none !important; }
 .notice-title { font-size:14px; font-weight:750; line-height:1.45; } .notice-title a { color:#143d46; text-decoration:none; } .notice-title a:hover { text-decoration:underline; }
 .tier-tag { display:inline-block; margin-bottom:7px; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:800; }
 .tier-tag.tier_1 { background:#e6f4ec; color:#206642; } .tier-tag.tier_2 { background:#fff3de; color:#80561b; } .tier-tag.tier_3 { background:#edf1f5; color:#43546b; }
+.type-tag { display:inline-block; margin:0 0 7px 5px; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:800; }
+.type-tag.grant_application { background:#e7f3fb; color:#205b7d; } .type-tag.procurement_bid { background:#f1f2f5; color:#4c5564; }
 .meta { color:var(--muted); font-size:12px; margin-top:5px; } .number { text-align:right; font-variant-numeric:tabular-nums; font-weight:700; }
 .date { margin-top:6px; font-variant-numeric:tabular-nums; }
 .active-status,.deadline-priority { display:inline-block; padding:2px 7px; border-radius:6px; font-size:11px; font-weight:800; white-space:nowrap; }
@@ -70,6 +75,7 @@ tr[hidden], [hidden] { display:none !important; }
   .kpis { grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; } .kpi { padding:11px; min-height:104px; }
   .kpi span { font-size:11px; } .kpi strong { font-size:24px; } .kpi small { font-size:10px; }
   .panel { padding:16px; } .filters { grid-template-columns:1fr; }
+  .grant-callout { display:block; } .grant-callout button { margin-top:10px; width:100%; }
   .table-wrap { border:0; overflow:visible; } table { min-width:0; } thead { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; }
   tbody,tr,td { display:block; width:100%; } tr { border:1px solid var(--line); border-radius:10px; margin:0 0 10px; overflow:hidden; }
   td { display:grid; grid-template-columns:86px minmax(0,1fr); gap:10px; border:0; border-top:1px solid #edf1f1; padding:9px 12px; }
@@ -82,7 +88,7 @@ tr[hidden], [hidden] { display:none !important; }
 
 PUBLIC_DASHBOARD_JS = """
 const rows = Array.from(document.querySelectorAll('.notice-row'));
-const controls = ['search','tier','active','deadline-priority','source','document','deadline'].map(id => document.getElementById(id));
+const controls = ['search','tier','notice-type','active','deadline-priority','source','document','deadline'].map(id => document.getElementById(id));
 const resultCount = document.getElementById('result-count');
 const empty = document.getElementById('empty');
 const more = document.getElementById('more');
@@ -90,6 +96,7 @@ let limit = 25;
 function matches(row) {
   const query = document.getElementById('search').value.trim().toLocaleLowerCase();
   const tier = document.getElementById('tier').value;
+  const noticeType = document.getElementById('notice-type').value;
   const active = document.getElementById('active').value;
   const priority = document.getElementById('deadline-priority').value;
   const source = document.getElementById('source').value;
@@ -97,6 +104,7 @@ function matches(row) {
   const deadline = document.getElementById('deadline').value;
   return (!query || row.dataset.search.includes(query))
     && (!tier || row.dataset.tier === tier)
+    && (!noticeType || row.dataset.noticeType === noticeType)
     && (!active || row.dataset.active === active)
     && (!priority || row.dataset.deadlinePriority === priority)
     && (!source || row.dataset.source === source)
@@ -117,6 +125,12 @@ document.getElementById('reset').addEventListener('click', () => {
   controls.forEach(control => { control.value = ''; });
   document.getElementById('active').value = 'active';
   applyFilters(true);
+});
+document.getElementById('grant-all').addEventListener('click', () => {
+  controls.forEach(control => { control.value = ''; });
+  document.getElementById('notice-type').value = 'grant_application';
+  applyFilters(true);
+  document.getElementById('notice-list').scrollIntoView({block:'start', inline:'nearest'});
 });
 document.querySelectorAll('.kpi[data-tier-target]').forEach(card => {
   card.addEventListener('click', event => {

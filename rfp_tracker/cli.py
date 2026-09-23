@@ -184,6 +184,8 @@ def sync_command(args: argparse.Namespace) -> int:
     source_config = read_json(args.config)
     keyword_config = read_json(args.keywords)
     sources = enabled_sources(source_config)
+    if getattr(args, "source_type", None):
+        sources = [source for source in sources if source.get("type") == args.source_type]
     global_config = source_config.get("global", {})
 
     connection = connect(args.db)
@@ -192,11 +194,22 @@ def sync_command(args: argparse.Namespace) -> int:
     inserted_count = 0
     status = "success"
     message = ""
+    grant_errors: list[str] = []
 
     try:
         for source in sources:
             fetcher = build_fetcher(source, keyword_config, global_config, ROOT_DIR)
-            notices = fetcher.fetch(days=args.days)
+            try:
+                notices = fetcher.fetch(days=args.days)
+            except Exception as exc:
+                if source.get("type") != "official_grant_board":
+                    raise
+                # A public support-board outage must not suppress G2B collection
+                # or the scheduled client briefing. Preserve the failure signal.
+                warning = f"{source['id']}: {type(exc).__name__}"
+                grant_errors.append(warning)
+                print(f"[warn] 공식 지원사업 수집 실패: {warning}", file=sys.stderr)
+                continue
             print(f"[sync] {source['id']}: 후보 {len(notices)}건")
             accepted_notices = []
             for notice in notices:
@@ -223,6 +236,9 @@ def sync_command(args: argparse.Namespace) -> int:
         print(f"[error] {message}", file=sys.stderr)
         return 1
 
+    if grant_errors:
+        status = "partial"
+        message = "; ".join(grant_errors)
     finish_run(connection, run_id, len(all_notices), inserted_count, status=status, message=message)
     print(f"[done] 수집 후보 {len(all_notices)}건, 신규 {inserted_count}건")
     return 0
@@ -929,6 +945,11 @@ def build_parser() -> argparse.ArgumentParser:
     sync.add_argument("--keywords", default=str(DEFAULT_KEYWORDS))
     sync.add_argument("--db", default=str(ROOT_DIR / "data" / "rfp_tracker.db"))
     sync.add_argument("--days", type=int, default=14)
+    sync.add_argument(
+        "--source-type",
+        choices=["official_grant_board"],
+        help="Only query the selected public source type; no G2B API request.",
+    )
     sync.set_defaults(func=sync_command)
 
     reconcile_open_g2b = subparsers.add_parser(

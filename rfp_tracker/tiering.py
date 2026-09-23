@@ -85,6 +85,7 @@ SCIENCE_PROJECT = ("기술개발", "실증", "시험", "r&d")
 
 TIER_2_DOMAINS = (
     "탄소중립", "온실가스", "저탄소", "탈탄소", "탄소감축",
+    "배출권거래제", "배출권 거래제",
     "탄소 감축", "재생에너지", "신재생에너지", "에너지효율",
     "환경설비", "환경 설비", "친환경 설비", "오염저감설비", "오염 저감 설비",
 )
@@ -169,7 +170,7 @@ def assess_innergen_tier(
     procurement_method: str = "",
 ) -> TierAssessment:
     """Classify title evidence; buyer/procurement facts can reject supplier bids."""
-    del category, matched_keywords
+    del matched_keywords
     text = " ".join((title or "").casefold().split())
     if not text:
         return TierAssessment(TIER_3, "제외: 공고 제목에서 사업범위를 확인할 수 없음")
@@ -182,7 +183,13 @@ def assess_innergen_tier(
     support_domain = _signals(text, TIER_2_DOMAINS)
     support = _signals(text, TIER_2_SUPPORT)
     equipment = _signals(text, TIER_2_EQUIPMENT_OR_FINANCE)
-    if support_domain and support and equipment:
+    if category == "grant_application":
+        # Design Ref: §3 — only the allowlisted official grant adapters set this category.
+        if support_domain and equipment and (support or "경매사업" in text):
+            signals = tuple(dict.fromkeys((*support_domain, *support, *equipment)))
+            return TierAssessment(TIER_2, _reason("공식 고객사 설비지원 신청 공고", signals), signals)
+        return TierAssessment(TIER_3, "제외: 공식 신청 공고이나 고객사 설비지원 범위 확인 필요")
+    if support_domain and support and equipment and not category.startswith("g2b_"):
         accepting_applications = bool(_signals(text, TIER_2_APPLICATION))
         supplier_purchase = bool(_signals(text, GOODS_PROCUREMENT))
         private_supplier_bid = bool(procurement_method.strip()) and bool(

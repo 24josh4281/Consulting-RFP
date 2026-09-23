@@ -154,6 +154,20 @@ def _write_html(path: Path, content: str) -> None:
 
 
 def _fallback_notice_details(notice: dict[str, object]) -> str:
+    if str(notice.get("notice_type") or "") == "grant_application":
+        attachment_links = [
+            _external_link(item.get("url"), item.get("label") or "공개 첨부")
+            for item in list(notice.get("attachments") or []) if item.get("url")
+        ]
+        return f'''
+          <article class="document-card fallback-card">
+            <p><strong>운영기관:</strong> {html.escape(str(notice.get("buyer") or "미수집"))}</p>
+            <p><strong>신청 마감:</strong> {html.escape(str(notice.get("deadline_at") or "원문 확인 필요"))}</p>
+            <p><strong>지원 규모·자격:</strong> 공식 공고문에서 확인하세요. 입찰 예산과 다른 개념입니다.</p>
+            <p><strong>공식 모집공고:</strong> {_external_link(notice.get("url"), "신청 조건 확인")}</p>
+            <p><strong>첨부:</strong> {", ".join(attachment_links) if attachment_links else "원문에서 확인"}</p>
+          </article>
+        '''
     budget = _format_krw(notice.get("budget_value_krw"))
     if budget == "금액 미확인" and notice.get("budget"):
         budget = html.escape(str(notice.get("budget")))
@@ -723,6 +737,8 @@ def _render_public_workbench_dashboard(payload: dict[str, object], path: Path) -
         {str(notice.get("document_status") or "not_attempted") for notice in notices}
     )
     new_tier_1_items = [item for item in notices if item.get("is_new_tier_1")]
+    grant_total = sum(1 for item in notices if item.get("notice_type") == "grant_application")
+    grant_active = sum(1 for item in notices if item.get("notice_type") == "grant_application" and item.get("is_active"))
     cards = [
         ("오늘 신규 Tier 1", len(new_tier_1_items), "focus", "#new-tier1"),
         ("접수 중 Tier 1", summary.get("active_tier_1", 0), "active", "#notice-list"),
@@ -743,6 +759,8 @@ def _render_public_workbench_dashboard(payload: dict[str, object], path: Path) -
     rows: list[str] = []
     for notice in notices:
         tier = str(notice.get("business_tier") or "")
+        notice_type = str(notice.get("notice_type") or "procurement_bid")
+        is_grant = notice_type == "grant_application"
         tier_label_text = {
             "tier_1": "Tier 1 · 직접 컨설팅",
             "tier_2": "Tier 2 · 고객사 지원",
@@ -769,14 +787,24 @@ def _render_public_workbench_dashboard(payload: dict[str, object], path: Path) -
         budget_html = _format_krw(notice.get("budget_value_krw"))
         if budget_html == "금액 미확인" and notice.get("budget"):
             budget_html = html.escape(str(notice["budget"]))
+        if is_grant and budget_html == "금액 미확인":
+            budget_html = "공고문 확인"
+        if is_grant:
+            state_label = "신청 가능" if notice.get("is_active") else ("신청 마감" if deadline else "마감 확인 필요")
+            detail_label = "공고 · 첨부 보기"
+            method_label = "신청 유형"
+        else:
+            state_label = "입찰 접수 중" if notice.get("is_active") else "입찰 종료·확인"
+            detail_label = "RFP · 상세 보기"
+            method_label = "입찰 방식"
         rows.append(
             f"""
-            <tr id="notice-{int(notice['id'])}" class="notice-row" data-tier="{html.escape(tier, quote=True)}" data-active="{'active' if notice.get('is_active') else 'inactive'}" data-source="{html.escape(source_name, quote=True)}" data-document="{html.escape(status, quote=True)}" data-deadline-priority="{html.escape(deadline_priority, quote=True)}" data-deadline="{html.escape(deadline[:10], quote=True)}" data-search="{html.escape(search_text, quote=True)}">
-              <td data-label="공고" class="title"><span class="tier-tag {html.escape(tier, quote=True)}">{tier_label_text}</span><div class="notice-title">{_external_link(notice.get('url'), notice.get('title'))}</div><div class="meta">{html.escape(source_name)} · {html.escape(str(notice.get('published_at') or '공고일 미수집'))}</div></td>
-              <td data-label="발주기관">{html.escape(str(notice.get('buyer') or '미수집'))}</td>
-              <td data-label="마감"><div class="deadline-cell"><span class="active-status {'active' if notice.get('is_active') else 'inactive'}">{'접수 중' if notice.get('is_active') else '접수 종료·확인'}</span>{_deadline_priority_badge(deadline_priority)}<div class="date">{html.escape(deadline or '마감일 미수집')}</div></div></td>
+            <tr id="notice-{int(notice['id'])}" class="notice-row" data-tier="{html.escape(tier, quote=True)}" data-notice-type="{html.escape(notice_type, quote=True)}" data-active="{'active' if notice.get('is_active') else 'inactive'}" data-source="{html.escape(source_name, quote=True)}" data-document="{html.escape(status, quote=True)}" data-deadline-priority="{html.escape(deadline_priority, quote=True)}" data-deadline="{html.escape(deadline[:10], quote=True)}" data-search="{html.escape(search_text, quote=True)}">
+              <td data-label="공고" class="title"><span class="tier-tag {html.escape(tier, quote=True)}">{tier_label_text}</span><span class="type-tag {html.escape(notice_type, quote=True)}">{'지원금 신청' if is_grant else '입찰·구매'}</span><div class="notice-title">{_external_link(notice.get('url'), notice.get('title'))}</div><div class="meta">{html.escape(source_name)} · {html.escape(str(notice.get('published_at') or '공고일 미수집'))}</div></td>
+              <td data-label="{'운영기관' if is_grant else '발주기관'}">{html.escape(str(notice.get('buyer') or '미수집'))}</td>
+              <td data-label="{'신청 마감' if is_grant else '입찰 마감'}"><div class="deadline-cell"><span class="active-status {'active' if notice.get('is_active') else 'inactive'}">{state_label}</span>{_deadline_priority_badge(deadline_priority)}<div class="date">{html.escape(deadline or '마감일 미수집')}</div></div></td>
               <td data-label="공고 금액" class="number">{budget_html}</td>
-              <td data-label="자료·상세"><details class="row-details"><summary>RFP · 상세 보기</summary><div class="docs"><p><strong>입찰 방식:</strong> {method_html}</p>{summary_html}{amount_html}{_workbench_document_details(notice)}</div></details></td>
+              <td data-label="자료·상세"><details class="row-details"><summary>{detail_label}</summary><div class="docs"><p><strong>{method_label}:</strong> {method_html}</p>{summary_html}{amount_html}{_workbench_document_details(notice)}</div></details></td>
             </tr>
             """
         )
@@ -801,31 +829,33 @@ def _render_public_workbench_dashboard(payload: dict[str, object], path: Path) -
     )
     page = f"""<!doctype html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>기후·온실가스 입찰 대시보드</title><style>{PUBLIC_DASHBOARD_CSS}</style></head>
+<title>기후·온실가스 공고 및 지원사업 대시보드</title><style>{PUBLIC_DASHBOARD_CSS}</style></head>
 <body><a class="skip-link" href="#notice-list">공고 목록으로 건너뛰기</a><main class="shell">
   <header class="hero">
     <div class="eyebrow">CLIMATE PROCUREMENT INTELLIGENCE</div>
-    <h1>기후·온실가스 입찰, 한눈에 검토</h1>
-    <p>기후·온실가스·배출권·외부사업 관련 공고를 폭넓게 모았습니다. Tier 1은 이너젠 직접 컨설팅, Tier 2는 고객사 지원사업, Tier 3는 관련 주제의 참고 공고입니다. Tier 3에는 장비 구매·행사·연구 등 직접 수행과 무관한 건도 포함되며 메일 알림 대상은 아닙니다.</p>
+    <h1>기후·온실가스 입찰과 지원사업, 한눈에 검토</h1>
+    <p>나라장터 입찰과 고객사가 직접 신청하는 공식 지원사업을 별도로 표시합니다. Tier 1은 이너젠 직접 컨설팅, Tier 2는 고객사 지원사업, Tier 3는 관련 주제의 참고 공고입니다. 지원사업 신청 가능 여부는 공식 원문과 접수기간을 확인하세요.</p>
     <div class="hero-meta"><span>나라장터 및 공식 출처</span><span>마지막 갱신 {html.escape(str(summary.get('generated_at') or '미확인'))}</span><span>공개 스냅샷</span></div>
   </header>
   <section class="kpis" aria-label="핵심 현황">{card_html}</section>
+  <aside class="grant-callout" aria-label="고객사 지원사업 현황"><div><strong>고객사 지원사업 · 현재 신청 가능 {grant_active}건</strong><p>공식 참여기업 모집공고 {grant_total}건을 별도 수집했습니다. 마감된 공고도 다음 모집을 준비할 때 확인할 수 있습니다.</p></div><button id="grant-all" type="button">지원사업 전체 보기 →</button></aside>
   <section id="new-tier1" class="panel" aria-labelledby="new-heading">
     <div class="section-head"><div><h2 id="new-heading">오늘 신규 Tier 1</h2><p>오늘 처음 수집한 접수 중 직접 컨설팅 후보만 표시합니다.</p></div><span class="section-count">{len(new_tier_1_items)}건</span></div>
     <ul class="lead-list">{new_public_html}</ul>
   </section>
   <section id="notice-list" class="panel" aria-labelledby="list-heading">
-    <div class="section-head"><div><h2 id="list-heading">기후 관련 전체 공고 탐색</h2><p>접수 중 Tier 1, Tier 2, Tier 3 순으로 보여줍니다. Tier 3는 참고용이며, 마감 공고까지 보려면 접수 상태에서 ‘전체’를 선택하세요.</p></div></div>
+    <div class="section-head"><div><h2 id="list-heading">기후 관련 전체 공고 탐색</h2><p>‘공고 유형’에서 고객사 지원금 신청과 입찰·구매를 구분할 수 있습니다. 마감 공고까지 보려면 접수 상태에서 ‘전체’를 선택하세요.</p></div></div>
     <div class="filters" role="search">
       <div><label for="search">공고 검색</label><input id="search" type="search" placeholder="공고명·기관·과업 키워드"></div>
       <div><label for="tier">업무 적합성</label><select id="tier"><option value="">Tier 1·2·3 전체</option><option value="tier_1">Tier 1 · 직접 컨설팅</option><option value="tier_2">Tier 2 · 고객사 지원</option><option value="tier_3">Tier 3 · 관련 참고</option></select></div>
+      <div><label for="notice-type">공고 유형</label><select id="notice-type"><option value="">전체 유형</option><option value="grant_application">고객사 지원금 신청</option><option value="procurement_bid">입찰·구매 공고</option></select></div>
       <div><label for="active">접수 상태</label><select id="active"><option value="active" selected>접수 중</option><option value="">전체</option><option value="inactive">마감 경과·확인</option></select></div>
       <div><label for="deadline-priority">중요 마감</label><select id="deadline-priority"><option value="">전체</option><option value="D-7">D-7</option><option value="D-3">D-3</option></select></div>
       <div><label for="source">출처</label><select id="source"><option value="">전체</option>{source_select}</select></div>
     </div>
     <div class="filter-actions"><details class="advanced"><summary>상세 필터</summary><div class="advanced-grid"><div><label for="document">문서 상태</label><select id="document"><option value="">전체</option>{document_select}</select></div><div><label for="deadline">마감일 이전</label><input id="deadline" type="date"></div></div></details><button id="reset" type="button">필터 초기화</button></div>
     <p id="result-count" class="result-count" aria-live="polite">검색 결과 준비 중</p>
-    <div class="table-wrap"><table><caption class="sr-only">기후·온실가스 관련 공식 공고 목록</caption><thead><tr><th scope="col">공고·출처</th><th scope="col">발주기관</th><th scope="col">마감·상태</th><th scope="col">공고 금액</th><th scope="col">자료·상세</th></tr></thead><tbody id="notice-rows">{''.join(rows)}</tbody></table></div>
+    <div class="table-wrap"><table><caption class="sr-only">기후·온실가스 관련 공식 공고 목록</caption><thead><tr><th scope="col">공고·출처</th><th scope="col">발주·운영기관</th><th scope="col">마감·상태</th><th scope="col">입찰금액·지원규모</th><th scope="col">자료·상세</th></tr></thead><tbody id="notice-rows">{''.join(rows)}</tbody></table></div>
     <p id="empty" class="empty-lead" hidden>조건에 맞는 공고가 없습니다. 필터를 변경해 보세요.</p>
     <button id="more" class="more" type="button">25건 더 보기</button>
     <p class="footnote">표시 금액은 공고 목록의 값입니다. 예산액·추정가격·입찰금액은 서로 다른 기준일 수 있으므로 공식 원문에서 확인하세요. 이 페이지는 마지막 갱신 시점의 정적 화면입니다.</p>

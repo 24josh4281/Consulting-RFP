@@ -50,10 +50,25 @@ def deadline_priority_label(days_remaining: int | None) -> str:
 def is_notice_active(row: Any, now: datetime | None = None) -> bool:
     """Return whether a stored notice is still accepting bids or has no known deadline."""
     current = now or seoul_now()
+    category = str(row["category"] or "") if "category" in row.keys() else ""
+    if category == "grant_application":
+        # A grant must have positive application-window evidence to be called open.
+        try:
+            raw = json.loads(str(row["raw_json"] or "{}"))
+        except (KeyError, TypeError, json.JSONDecodeError):
+            raw = {}
+        if not isinstance(raw, dict):
+            raw = {}
+        status = str(raw.get("application_status") or "").replace(" ", "")
+        if any(marker in status for marker in ("접수마감", "접수종료", "모집마감", "신청마감", "취소")):
+            return False
+        start = parse_notice_datetime(raw.get("application_start_at"))
+        if start and start > current:
+            return False
     deadline_text = str(row["deadline_at"] or "").strip()
     deadline = parse_notice_datetime(deadline_text)
     if deadline is None:
-        return True
+        return category != "grant_application"
     digits = "".join(character for character in deadline_text if character.isdigit())
     # Date-only source values represent the whole KST calendar day, not midnight.
     if len(digits) <= 8:
@@ -92,6 +107,7 @@ def notice_view(row: Any, now: datetime | None = None) -> dict[str, Any]:
         "buyer": str(row["buyer"] or ""),
         "budget": str(row["budget"] or ""),
         "procurement_method": str(row["procurement_method"] or ""),
+        "category": str(row["category"] or "") if "category" in row.keys() else "",
         "published_at": str(row["published_at"] or ""),
         "deadline_at": str(row["deadline_at"] or ""),
         "deadline": deadline,

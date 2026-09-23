@@ -250,7 +250,7 @@ def _display_deadline(item: dict[str, Any]) -> str:
 def _display_budget(item: dict[str, Any]) -> str:
     raw = str(item.get("budget") or "").strip()
     if not raw:
-        return "금액 미수집"
+        return "지원 규모는 공고문 확인" if item.get("category") == "grant_application" else "금액 미수집"
     digits = raw.replace(",", "")
     return f"{int(digits):,}원" if digits.isdigit() else raw
 
@@ -331,7 +331,8 @@ def _document_links(item: dict[str, Any]) -> str:
         )
     if links:
         return "<br>".join(links)
-    return '<span style="color:#6B7280;">원문에서 RFP/과업지시서 확인</span>'
+    missing = "원문에서 지원사업 공고문 확인" if item.get("category") == "grant_application" else "원문에서 RFP/과업지시서 확인"
+    return f'<span style="color:#6B7280;">{missing}</span>'
 
 
 def _notice_table(items: list[dict[str, Any]], tier: str, accent: str, tint: str) -> str:
@@ -355,6 +356,9 @@ def _notice_table(items: list[dict[str, Any]], tier: str, accent: str, tint: str
         source = html.escape(str(item["source_name"]))
         budget = html.escape(_display_budget(item))
         procurement_method = html.escape(str(item.get("procurement_method") or "입찰 방식 미수집"))
+        is_grant = item.get("category") == "grant_application"
+        amount_label = "지원 규모" if is_grant else "공고 금액"
+        document_label = "공고문·첨부" if is_grant else "RFP·첨부"
         reason = html.escape(str(item.get("tier_reason") or "원문 확인 필요"))
         title = html.escape(str(item["title"]))
         deadline_priority = str(item.get("deadline_priority") or "")
@@ -377,9 +381,9 @@ def _notice_table(items: list[dict[str, Any]], tier: str, accent: str, tint: str
             f'{tier_badge}{priority_badge}<div style="font-size:14px;font-weight:700;line-height:1.45;color:#16231D;">{title}</div>'
             f'<div style="margin-top:6px;color:#4B5563;font-size:12px;">{reason}</div>'
             f'<div style="margin-top:8px;color:#334155;font-size:12px;line-height:1.55;">{source} · {buyer}<br>'
-            f'마감: {html.escape(_display_deadline(item))}<br>공고 금액: {budget} · {procurement_method}</div>'
+            f'마감: {html.escape(_display_deadline(item))}<br>{amount_label}: {budget} · {procurement_method}</div>'
             f'<div style="margin-top:8px;color:#6B7280;font-size:12px;">키워드: {keyword_text}</div>'
-            f'<div style="margin-top:8px;font-size:12px;line-height:1.6;">RFP·첨부: {_document_links(item)}</div></td>'
+            f'<div style="margin-top:8px;font-size:12px;line-height:1.6;">{document_label}: {_document_links(item)}</div></td>'
             f'<td width="22%" style="border:1px solid #D1D5DB;padding:14px;vertical-align:top;text-align:center;">{link}</td>'
             "</tr>"
         )
@@ -387,7 +391,7 @@ def _notice_table(items: list[dict[str, Any]], tier: str, accent: str, tint: str
         '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" '
         'style="border:1px solid #D1D5DB;border-collapse:collapse;background:#FFFFFF;font-family:Segoe UI,Malgun Gothic,Arial,sans-serif;">'
         "<thead><tr>"
-        f'<th width="78%" style="border:1px solid #D1D5DB;padding:10px;background:{tint};color:{accent};text-align:left;font-size:12px;">공고 · 발주기관 · 금액 · 마감 · RFP</th>'
+        f'<th width="78%" style="border:1px solid #D1D5DB;padding:10px;background:{tint};color:{accent};text-align:left;font-size:12px;">공고 · 기관 · 금액/지원 규모 · 마감 · 자료</th>'
         f'<th width="22%" style="border:1px solid #D1D5DB;padding:10px;background:{tint};color:{accent};text-align:center;font-size:12px;">공식 원문</th>'
         "</tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
     )
@@ -420,7 +424,7 @@ def _daily_notice_table(items: list[dict[str, Any]], accent: str, tint: str) -> 
     return (
         '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" '
         'style="border:1px solid #D1D5DB;border-collapse:collapse;font-family:Segoe UI,Malgun Gothic,Arial,sans-serif;">'
-        f'<tr style="background:{tint};color:{accent};"><th align="left" style="border:1px solid #D1D5DB;padding:8px;">공고 · 기관 · 금액</th>'
+        f'<tr style="background:{tint};color:{accent};"><th align="left" style="border:1px solid #D1D5DB;padding:8px;">공고 · 기관 · 금액/지원 규모</th>'
         '<th align="left" style="border:1px solid #D1D5DB;padding:8px;">마감</th></tr>'
         + "".join(rows) + '</table>'
     )
