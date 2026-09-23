@@ -420,12 +420,14 @@ def notifications_status_command(args: argparse.Namespace) -> int:
     print(f"recipients={', '.join(status['recipients']) or 'MISSING'}")
     print(f"baseline_at={status['baseline_at'] or 'NOT_INITIALIZED'}")
     print(f"daily_send_times={', '.join(status['daily_send_times'])} KST")
+    print(f"dashboard_url={status['dashboard_url']}")
     print(f"weekly={status['weekly_send_day']} {status['weekly_send_at']} KST")
+    print(f"data_go_kr_service_key={'READY' if status['data_go_kr_service_key_ready'] else 'MISSING'}")
     smtp_state = "READY" if status["smtp_ready"] else "MISSING"
     print(f"smtp={smtp_state}")
     if status["smtp_missing"]:
         print("smtp_missing=" + ", ".join(status["smtp_missing"]))
-    if args.strict and (not status["recipients"] or not status["smtp_ready"]):
+    if args.strict and (not status["recipients"] or not status["smtp_ready"] or not status["data_go_kr_service_key_ready"]):
         return 1
     return 0
 
@@ -489,6 +491,7 @@ def notifications_dispatch_command(args: argparse.Namespace) -> int:
             min_score=args.min_score if args.min_score is not None else int(config["min_relevance_score"]),
             daily_slot=daily_slot,
             send=args.send,
+            dashboard_url=str(config["dashboard_url"]),
         )
     except ValueError as exc:
         print(f"[error] {exc}", file=sys.stderr)

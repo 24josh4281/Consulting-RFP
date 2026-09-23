@@ -90,6 +90,8 @@ def notice_view(row: Any, now: datetime | None = None) -> dict[str, Any]:
         "url": str(row["url"] or ""),
         "source_name": str(row["source_name"]),
         "buyer": str(row["buyer"] or ""),
+        "budget": str(row["budget"] or ""),
+        "procurement_method": str(row["procurement_method"] or ""),
         "published_at": str(row["published_at"] or ""),
         "deadline_at": str(row["deadline_at"] or ""),
         "deadline": deadline,

@@ -271,7 +271,7 @@ class ConfigUtilityTests(unittest.TestCase):
         self.assertEqual(g2b["max_pages"], 5)
         self.assertEqual(
             g2b["endpoint"],
-            "https://apis.data.go.kr/1230000/ad/BidPublicInfoService/getBidPblancListInfoServc",
+            "https://apis.data.go.kr/1230000/ad/BidPublicInfoService/getBidPblancListInfoServcPPSSrch",
         )
         self.assertEqual(g2b["service_key_param"], "serviceKey")
         self.assertIn("https://www.g2b.go.kr/", g2b["portal_url"])
@@ -568,8 +568,9 @@ class OfficialBoardFetcherTests(unittest.TestCase):
             "detail_delay_seconds": 0,
         }
         listing_html = '<a href="/home/board/read.do?boardId=1">[입찰] 온실가스 검증 용역</a>'
-        detail_html = """
-        <p>등록일 2026-09-18</p><p>등록자 기획총괄팀</p>
+        published_date = datetime.now().strftime("%Y-%m-%d")
+        detail_html = f"""
+        <p>등록일 {published_date}</p><p>등록자 기획총괄팀</p>
         <p>전자입찰로 진행합니다.</p>
         <a href="/files/download?file=1">제안요청서.hwpx</a>
         """
@@ -582,7 +583,7 @@ class OfficialBoardFetcherTests(unittest.TestCase):
             notices = fetcher.fetch(days=3)
 
         self.assertEqual(len(notices), 1)
-        self.assertEqual(notices[0].published_at, "2026-09-18")
+        self.assertEqual(notices[0].published_at, published_date)
         self.assertEqual(notices[0].procurement_method, "전자입찰")
         self.assertEqual(len(notices[0].attachments), 1)
         self.assertEqual(notices[0].attachments[0].file_type, "hwpx")
@@ -778,12 +779,68 @@ class NotificationTests(unittest.TestCase):
             self.assertEqual(daily[0].sent, 1)
             newsletter = digest_payloads[0].html
             self.assertIn("INNERGEN CLIMATE INTELLIGENCE", newsletter)
+            self.assertIn("오늘 신규 추가", newsletter)
             self.assertIn("Tier 1 · 이너젠 직접 컨설팅 검토", newsletter)
             self.assertIn("Tier 2 · 고객사 추천 가능 사업", newsletter)
-            self.assertIn("Tier 3 · 참고 / 직접 컨설팅 비적합", newsletter)
+            self.assertNotIn("Tier 3 · 참고 / 직접 컨설팅 비적합", newsletter)
             self.assertIn("border:1px solid #D1D5DB", newsletter)
             self.assertIn("온실가스 저감 설비 설치 지원", newsletter)
             self.assertIn("탄소중립 포럼 영상 제작", newsletter)
+            self.assertEqual(newsletter.count("탄소중립 포럼 영상 제작"), 1)
+            self.assertIn("https://24josh4281.github.io/Consulting-RFP/", newsletter)
+            connection.close()
+
+    def test_daily_digest_keeps_new_notices_and_only_older_active_tier_one_two(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            connection = connect(Path(tmp_dir) / "tracker.db")
+            current = datetime(2026, 9, 23, 10, 0, tzinfo=ZoneInfo("Asia/Seoul"))
+            dispatch_notifications(connection, recipients=["alerts@example.com"], mode="immediate", now=current - timedelta(days=1))
+            cases = [
+                ("new-tier-1", "신규 Scope 3 산정 용역", TIER_1, current),
+                ("new-tier-3", "신규 탄소중립 행사 용역", TIER_3, current),
+                ("old-tier-1", "진행 중 배출권거래제 연구", TIER_1, current - timedelta(days=2)),
+                ("old-tier-2", "진행 중 온실가스 설비 지원", TIER_2, current - timedelta(days=2)),
+                ("old-tier-3", "오래된 기후 영상 제작", TIER_3, current - timedelta(days=2)),
+            ]
+            for external_id, title, tier, first_seen in cases:
+                upsert_notice(
+                    connection,
+                    Notice(
+                        source_id="sample",
+                        source_name="Sample",
+                        external_id=external_id,
+                        title=title,
+                        url=f"https://example.com/{external_id}",
+                        relevance_score=6,
+                        business_tier=tier,
+                        tier_reason="검토용 분류",
+                    ),
+                )
+                connection.execute(
+                    "UPDATE notices SET first_seen_at = ? WHERE external_id = ?",
+                    (first_seen.isoformat(timespec="seconds"), external_id),
+                )
+            connection.commit()
+
+            captured = []
+            result = dispatch_notifications(
+                connection,
+                recipients=["alerts@example.com"],
+                mode="daily",
+                daily_slot="10:00",
+                send=True,
+                sender=lambda _recipient, payload: captured.append(payload),
+                now=current,
+            )
+            self.assertEqual(result[0].sent, 1)
+            self.assertEqual(len(captured), 1)
+            for _external_id, title, _tier, _first_seen in cases[:4]:
+                self.assertEqual(captured[0].html.count(title), 1)
+            self.assertNotIn(cases[4][1], captured[0].html)
+            self.assertIn("오늘 신규 추가", captured[0].text)
+            self.assertIn("현재 접수 중 Tier 1", captured[0].text)
+            self.assertIn("현재 접수 중 Tier 2", captured[0].text)
+            self.assertIn("https://24josh4281.github.io/Consulting-RFP/", captured[0].text)
             connection.close()
 
     def test_failed_immediate_email_stays_retryable(self):

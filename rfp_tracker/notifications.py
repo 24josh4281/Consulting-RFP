@@ -11,6 +11,7 @@ from email.message import EmailMessage
 from email.utils import parseaddr
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlparse
 
 from .briefing import is_notice_active, notice_view, parse_notice_datetime, seoul_now
 from .config import read_json, write_json
@@ -28,6 +29,7 @@ from .tiering import TIER_1, TIER_2, TIER_3, UNCLASSIFIED, tier_label, tier_shor
 
 
 BASELINE_SETTING = "notification_baseline_at"
+PUBLIC_DASHBOARD_URL = "https://24josh4281.github.io/Consulting-RFP/"
 DEFAULT_NOTIFICATION_CONFIG = {
     "recipients": [],
     "min_relevance_score": 3,
@@ -35,6 +37,7 @@ DEFAULT_NOTIFICATION_CONFIG = {
     "daily_send_times": ["10:00", "17:00"],
     "weekly_send_day": "FRI",
     "weekly_send_at": "18:00",
+    "dashboard_url": PUBLIC_DASHBOARD_URL,
 }
 
 
@@ -149,6 +152,11 @@ def read_notification_config(path: str | Path) -> dict[str, Any]:
     payload["daily_send_times"] = _safe_daily_send_times(daily_values)
     if not payload["daily_send_times"]:
         raise ValueError("daily_send_times must include at least one time in HH:MM format.")
+    dashboard_url = str(payload.get("dashboard_url") or "").strip()
+    parsed_dashboard = urlparse(dashboard_url)
+    if parsed_dashboard.scheme != "https" or not parsed_dashboard.netloc:
+        raise ValueError("dashboard_url must be a public HTTPS URL.")
+    payload["dashboard_url"] = dashboard_url
     payload.pop("daily_send_at", None)
     return payload
 
@@ -245,6 +253,14 @@ def _display_deadline(item: dict[str, Any]) -> str:
     return f"{deadline} (D-{item['days_remaining']})"
 
 
+def _display_budget(item: dict[str, Any]) -> str:
+    raw = str(item.get("budget") or "").strip()
+    if not raw:
+        return "금액 미수집"
+    digits = raw.replace(",", "")
+    return f"{int(digits):,}원" if digits.isdigit() else raw
+
+
 def _items_by_tier(items: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     grouped = {tier: [] for tier, *_ in TIER_SECTIONS}
     grouped[UNCLASSIFIED] = []
@@ -253,9 +269,24 @@ def _items_by_tier(items: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]
     return grouped
 
 
+def _first_seen_today(item: dict[str, Any], now: datetime) -> bool:
+    first_seen = parse_notice_datetime(str(item.get("first_seen_at") or ""))
+    return bool(first_seen and first_seen.date() == now.date())
+
+
+def _daily_sections(items: list[dict[str, Any]], now: datetime) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Show new open notices once, then older open Tier 1/2 notices."""
+    new_items = [item for item in items if _first_seen_today(item, now)]
+    ongoing = [
+        item for item in items
+        if item["business_tier"] in {TIER_1, TIER_2} and not _first_seen_today(item, now)
+    ]
+    return new_items, ongoing
+
+
 def _notice_lines(items: list[dict[str, Any]]) -> list[str]:
     if not items:
-        return ["- 신규 기준 공고가 없습니다."]
+        return ["- 해당 공고가 없습니다."]
     lines: list[str] = []
     for item in items:
         deadline = _display_deadline(item)
@@ -263,7 +294,8 @@ def _notice_lines(items: list[dict[str, Any]]) -> list[str]:
         lines.extend(
             [
                 f"- {marker}{item['title']}",
-                f"  출처: {item['source_name']} | 점수: {item['relevance_score']} | 마감: {deadline}",
+                f"  출처: {item['source_name']} | 발주기관: {item.get('buyer') or '미수집'} | 마감: {deadline}",
+                f"  공고 금액: {_display_budget(item)} | 입찰 방식: {item.get('procurement_method') or '미수집'}",
                 f"  분류 근거: {item.get('tier_reason') or '원문 확인 필요'}",
                 f"  키워드: {', '.join(item['matched_keywords']) or '-'}",
                 f"  원문: {item['url'] or '미수집'}",
@@ -313,6 +345,8 @@ def _notice_table(items: list[dict[str, Any]], tier: str, accent: str, tint: str
         )
         buyer = html.escape(str(item.get("buyer") or "발주처 미수집"))
         source = html.escape(str(item["source_name"]))
+        budget = html.escape(_display_budget(item))
+        procurement_method = html.escape(str(item.get("procurement_method") or "입찰 방식 미수집"))
         reason = html.escape(str(item.get("tier_reason") or "원문 확인 필요"))
         title = html.escape(str(item["title"]))
         deadline_priority = str(item.get("deadline_priority") or "")
@@ -323,61 +357,104 @@ def _notice_table(items: list[dict[str, Any]], tier: str, accent: str, tint: str
             if deadline_priority else ""
         )
         keyword_text = html.escape(", ".join(item["matched_keywords"]) or "-")
+        tier_badge = (
+            f'<span style="display:inline-block;margin:0 0 6px 0;padding:3px 7px;border:1px solid #B7C9DB;'
+            f'background:#EAF2F8;color:#14365D;font-size:11px;font-weight:800;">'
+            f'{html.escape(tier_short_label(str(item.get("business_tier") or UNCLASSIFIED)))}</span><br>'
+            if tier == "new" else ""
+        )
         rows.append(
             "<tr>"
-            f'<td style="border:1px solid #D1D5DB;padding:12px;vertical-align:top;">'
-            f'{priority_badge}<div style="font-size:14px;font-weight:700;line-height:1.45;color:#16231D;">{title}</div>'
+            f'<td width="78%" style="border:1px solid #D1D5DB;padding:14px;vertical-align:top;word-break:break-word;">'
+            f'{tier_badge}{priority_badge}<div style="font-size:14px;font-weight:700;line-height:1.45;color:#16231D;">{title}</div>'
             f'<div style="margin-top:6px;color:#4B5563;font-size:12px;">{reason}</div>'
-            f'<div style="margin-top:6px;color:#6B7280;font-size:12px;">키워드: {keyword_text}</div></td>'
-            f'<td style="border:1px solid #D1D5DB;padding:12px;vertical-align:top;font-size:13px;">{source}<br>'
-            f'<span style="color:#6B7280;">{buyer}</span></td>'
-            f'<td style="border:1px solid #D1D5DB;padding:12px;vertical-align:top;font-size:13px;white-space:nowrap;">'
-            f"{html.escape(_display_deadline(item))}<br><span style=\"color:#6B7280;\">점수 {item['relevance_score']}</span></td>"
-            f'<td style="border:1px solid #D1D5DB;padding:12px;vertical-align:top;font-size:12px;">{_document_links(item)}</td>'
-            f'<td style="border:1px solid #D1D5DB;padding:12px;vertical-align:top;text-align:center;">{link}</td>'
+            f'<div style="margin-top:8px;color:#334155;font-size:12px;line-height:1.55;">{source} · {buyer}<br>'
+            f'마감: {html.escape(_display_deadline(item))}<br>공고 금액: {budget} · {procurement_method}</div>'
+            f'<div style="margin-top:8px;color:#6B7280;font-size:12px;">키워드: {keyword_text}</div>'
+            f'<div style="margin-top:8px;font-size:12px;line-height:1.6;">RFP·첨부: {_document_links(item)}</div></td>'
+            f'<td width="22%" style="border:1px solid #D1D5DB;padding:14px;vertical-align:top;text-align:center;">{link}</td>'
             "</tr>"
         )
     return (
         '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" '
         'style="border:1px solid #D1D5DB;border-collapse:collapse;background:#FFFFFF;font-family:Segoe UI,Malgun Gothic,Arial,sans-serif;">'
         "<thead><tr>"
-        f'<th style="border:1px solid #D1D5DB;padding:10px;background:{tint};color:{accent};text-align:left;font-size:12px;">공고 / 분류 근거</th>'
-        f'<th style="border:1px solid #D1D5DB;padding:10px;background:{tint};color:{accent};text-align:left;font-size:12px;">출처 / 발주처</th>'
-        f'<th style="border:1px solid #D1D5DB;padding:10px;background:{tint};color:{accent};text-align:left;font-size:12px;">마감 / 점수</th>'
-        f'<th style="border:1px solid #D1D5DB;padding:10px;background:{tint};color:{accent};text-align:left;font-size:12px;">RFP·첨부</th>'
-        f'<th style="border:1px solid #D1D5DB;padding:10px;background:{tint};color:{accent};text-align:center;font-size:12px;">원문</th>'
+        f'<th width="78%" style="border:1px solid #D1D5DB;padding:10px;background:{tint};color:{accent};text-align:left;font-size:12px;">공고 · 발주기관 · 금액 · 마감 · RFP</th>'
+        f'<th width="22%" style="border:1px solid #D1D5DB;padding:10px;background:{tint};color:{accent};text-align:center;font-size:12px;">공식 원문</th>'
         "</tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
+    )
+
+
+def _daily_notice_table(items: list[dict[str, Any]], accent: str, tint: str) -> str:
+    """Keep the full daily list below common email clipping limits.
+
+    The public dashboard carries the full metadata and attachment links.
+    """
+    if not items:
+        return '<p style="color:#6B7280;font-size:13px;">해당 공고가 없습니다.</p>'
+    rows: list[str] = []
+    for item in items:
+        url = html.escape(str(item.get("url") or ""), quote=True)
+        title = html.escape(str(item["title"]))
+        linked_title = f'<a href="{url}" style="color:#14365D;">{title}</a>' if url else title
+        tier = html.escape(tier_short_label(str(item.get("business_tier") or UNCLASSIFIED)))
+        buyer = html.escape(str(item.get("buyer") or item["source_name"]))
+        budget = html.escape(_display_budget(item))
+        deadline = html.escape(_display_deadline(item))
+        priority = html.escape(str(item.get("deadline_priority") or ""))
+        priority_text = f' <strong style="color:#A72B22;">{priority}</strong>' if priority else ""
+        rows.append(
+            '<tr><td style="border:1px solid #D1D5DB;padding:8px;font-size:12px;line-height:1.45;">'
+            f'<strong>{linked_title}</strong><br>{tier} · {buyer} · {budget}</td>'
+            '<td style="border:1px solid #D1D5DB;padding:8px;font-size:12px;white-space:nowrap;">'
+            f'{deadline}{priority_text}</td></tr>'
+        )
+    return (
+        '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" '
+        'style="border:1px solid #D1D5DB;border-collapse:collapse;font-family:Segoe UI,Malgun Gothic,Arial,sans-serif;">'
+        f'<tr style="background:{tint};color:{accent};"><th align="left" style="border:1px solid #D1D5DB;padding:8px;">공고 · 기관 · 금액</th>'
+        '<th align="left" style="border:1px solid #D1D5DB;padding:8px;">마감</th></tr>'
+        + "".join(rows) + '</table>'
     )
 
 
 def _newsletter_html(
     *,
+    mode: str,
     subject: str,
     intro: str,
     items: list[dict[str, Any]],
     new_items: list[dict[str, Any]],
+    ongoing_items: list[dict[str, Any]],
     include_all_tiers: bool,
     generated_at: datetime,
+    dashboard_url: str,
 ) -> str:
-    grouped = _items_by_tier(items)
-    sections = TIER_SECTIONS if include_all_tiers else (TIER_SECTIONS[0],)
+    grouped = _items_by_tier(ongoing_items if mode == "daily" else items)
+    sections = TIER_SECTIONS[:2] if mode == "daily" else (TIER_SECTIONS if include_all_tiers else (TIER_SECTIONS[0],))
     summary_cells = []
-    for tier, title, _description, accent, tint in TIER_SECTIONS:
+    if mode == "daily":
+        summary_cells.append(
+            '<td width="33.33%" style="border:1px solid #D1D5DB;background:#E8F0FE;padding:12px;vertical-align:top;">'
+            '<div style="font-size:12px;font-weight:700;color:#1F6FEB;">오늘 신규</div>'
+            f'<div style="font-size:24px;font-weight:800;color:#16231D;margin-top:3px;">{len(new_items)}</div></td>'
+        )
+    for tier, title, _description, accent, tint in sections:
         summary_cells.append(
             f'<td width="33.33%" style="border:1px solid #D1D5DB;background:{tint};padding:12px;vertical-align:top;">'
-            f'<div style="font-size:12px;font-weight:700;color:{accent};">{html.escape(tier_short_label(tier))}</div>'
+            f'<div style="font-size:12px;font-weight:700;color:{accent};">{html.escape(tier_short_label(tier))}{" 진행 중" if mode == "daily" else ""}</div>'
             f'<div style="font-size:24px;font-weight:800;color:#16231D;margin-top:3px;">{len(grouped[tier])}</div>'
             f'<div style="font-size:11px;color:#4B5563;margin-top:2px;">{html.escape(tier_label(tier).split(" · ", 1)[-1])}</div></td>'
         )
 
     sections_html = []
-    if include_all_tiers and new_items:
+    if mode == "daily" or (include_all_tiers and new_items):
         sections_html.append(
             '<tr><td style="padding:0 0 22px 0;">'
             '<div style="border-left:5px solid #1F6FEB;padding:2px 0 2px 10px;margin:0 0 8px 0;">'
             f'<div style="font-size:16px;font-weight:800;color:#1F6FEB;">오늘 신규 추가 <span style="font-size:13px;font-weight:600;color:#4B5563;">{len(new_items)}건</span></div>'
-            '<div style="font-size:12px;color:#4B5563;line-height:1.5;margin-top:3px;">이번 수집 사이클에서 처음 확인된 공고입니다. Tier 1·2와 현재 접수 상태를 먼저 확인하세요.</div></div>'
-            f'{_notice_table(new_items, "new", "#1F6FEB", "#E8F0FE")}'
+            '<div style="font-size:12px;color:#4B5563;line-height:1.5;margin-top:3px;">오늘 처음 수집했고 아직 접수 중인 공고입니다. 모든 Tier를 포함합니다.</div></div>'
+            f'{_daily_notice_table(new_items, "#1F6FEB", "#E8F0FE") if mode == "daily" else _notice_table(new_items, "new", "#1F6FEB", "#E8F0FE")}'
             '</td></tr>'
         )
     for tier, title, description, accent, tint in sections:
@@ -386,7 +463,7 @@ def _newsletter_html(
             f'<div style="border-left:5px solid {accent};padding:2px 0 2px 10px;margin:0 0 8px 0;">'
             f'<div style="font-size:16px;font-weight:800;color:{accent};">{html.escape(title)} <span style="font-size:13px;font-weight:600;color:#4B5563;">{len(grouped[tier])}건</span></div>'
             f'<div style="font-size:12px;color:#4B5563;line-height:1.5;margin-top:3px;">{html.escape(description)}</div></div>'
-            f'{_notice_table(grouped[tier], tier, accent, tint)}'
+            f'{_daily_notice_table(grouped[tier], accent, tint) if mode == "daily" else _notice_table(grouped[tier], tier, accent, tint)}'
             '</td></tr>'
         )
 
@@ -401,6 +478,7 @@ def _newsletter_html(
         )
 
     generated_label = generated_at.strftime("%Y-%m-%d %H:%M KST")
+    safe_dashboard_url = html.escape(dashboard_url, quote=True)
     return f"""<!doctype html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
 <body style="margin:0;padding:0;background:#F3F6F4;color:#16231D;font-family:Segoe UI,Malgun Gothic,Arial,sans-serif;">
@@ -414,6 +492,7 @@ def _newsletter_html(
       <tr><td style="padding:24px 26px 8px 26px;border-left:1px solid #C9D4CD;border-right:1px solid #C9D4CD;">
         <p style="margin:0 0 16px 0;font-size:14px;line-height:1.6;color:#334155;">{html.escape(intro)}</p>
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #D1D5DB;border-collapse:collapse;margin:0 0 22px 0;"><tr>{''.join(summary_cells)}</tr></table>
+        <p style="margin:0 0 22px 0;"><a href="{safe_dashboard_url}" style="display:inline-block;padding:12px 18px;background:#14365D;color:#FFFFFF;font-size:14px;font-weight:700;text-decoration:none;border:1px solid #14365D;">대시보드에서 한 번에 확인하기</a></p>
       </td></tr>
       <tr><td style="padding:0 26px;border-left:1px solid #C9D4CD;border-right:1px solid #C9D4CD;">
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0">{''.join(sections_html)}</table>
@@ -434,6 +513,7 @@ def _email_payload(
     *,
     daily_slot: str = "17:00",
     deadline_alerts: list[dict[str, Any]] | None = None,
+    dashboard_url: str = PUBLIC_DASHBOARD_URL,
 ) -> EmailPayload | None:
     date_label = now.strftime("%Y-%m-%d")
     if mode == "immediate" and not items:
@@ -449,7 +529,7 @@ def _email_payload(
         notification_type = "daily"
         keys = [f"{date_label}-{daily_slot.replace(':', '')}"]
         notice_ids = [None]
-        intro = f"오늘 {daily_slot} 기준으로 현재 접수 중인 관련 공고 {len(items)}건을 정리했습니다. Tier 1·2를 먼저 확인하세요."
+        intro = ""
     elif mode == "weekly":
         week_key = f"{now.isocalendar().year}-W{now.isocalendar().week:02d}"
         subject = f"[INNERGEN Climate Intelligence] 주간 입찰 브리핑 ({week_key})"
@@ -461,14 +541,16 @@ def _email_payload(
         raise ValueError(f"Unsupported notification mode: {mode}")
 
     grouped = _items_by_tier(items)
-    new_items = [
-        item
-        for item in items
-        if (first_seen := parse_notice_datetime(str(item.get("first_seen_at") or "")))
-        and first_seen.date() == now.date()
-    ]
+    new_items, ongoing_items = _daily_sections(items, now) if mode == "daily" else (
+        [item for item in items if _first_seen_today(item, now)], items
+    )
+    if mode == "daily":
+        intro = (
+            f"오늘 {daily_slot} 기준 신규 공고 {len(new_items)}건과 "
+            f"계속 접수 중인 Tier 1·2 공고 {len(ongoing_items)}건입니다."
+        )
     text_lines = [subject, "", intro, ""]
-    if mode in {"daily", "weekly"} and deadline_alerts:
+    if mode == "weekly" and deadline_alerts:
         alert_groups = _items_by_tier(deadline_alerts)
         text_lines.append("[D-7 / D-3 중요 마감 · Tier 1/2]")
         for tier in (TIER_1, TIER_2):
@@ -477,24 +559,34 @@ def _email_payload(
                     [f"[{tier_label(tier)}] {len(alert_groups[tier])}건", *_notice_lines(alert_groups[tier])]
                 )
         text_lines.append("")
-    if mode in {"daily", "weekly"} and new_items:
-        text_lines.extend(["[오늘 신규 추가]", *_notice_lines(new_items), ""])
-    sections = TIER_SECTIONS if mode in {"daily", "weekly"} else (TIER_SECTIONS[0],)
-    for tier, title, description, _accent, _tint in sections:
-        text_lines.extend([f"[{title}] {len(grouped[tier])}건", description, *_notice_lines(grouped[tier]), ""])
-    if mode in {"daily", "weekly"} and grouped[UNCLASSIFIED]:
-        text_lines.extend(["[미분류 · 원문 확인 필요]", *_notice_lines(grouped[UNCLASSIFIED]), ""])
+    if mode == "daily":
+        text_lines.extend([f"[오늘 신규 추가] {len(new_items)}건", *_notice_lines(new_items), ""])
+        ongoing_by_tier = _items_by_tier(ongoing_items)
+        for tier, title, _description, _accent, _tint in TIER_SECTIONS[:2]:
+            text_lines.extend([f"[현재 접수 중 {title}] {len(ongoing_by_tier[tier])}건", *_notice_lines(ongoing_by_tier[tier]), ""])
+    else:
+        if mode == "weekly" and new_items:
+            text_lines.extend(["[오늘 신규 추가]", *_notice_lines(new_items), ""])
+        sections = TIER_SECTIONS if mode == "weekly" else (TIER_SECTIONS[0],)
+        for tier, title, description, _accent, _tint in sections:
+            text_lines.extend([f"[{title}] {len(grouped[tier])}건", description, *_notice_lines(grouped[tier]), ""])
+        if mode == "weekly" and grouped[UNCLASSIFIED]:
+            text_lines.extend(["[미분류 · 원문 확인 필요]", *_notice_lines(grouped[UNCLASSIFIED]), ""])
+    text_lines.extend(["대시보드에서 한 번에 확인: " + dashboard_url, ""])
     text_lines.append("원문과 첨부 RFP/과업지시서를 확인한 뒤 입찰 가능 여부를 판단하세요.")
     text = "\n".join(text_lines)
     html_body = _newsletter_html(
+        mode=mode,
         subject=subject,
         intro=intro,
         items=items,
         new_items=new_items,
+        ongoing_items=ongoing_items,
         include_all_tiers=mode in {"daily", "weekly"},
         generated_at=now,
+        dashboard_url=dashboard_url,
     )
-    if mode in {"daily", "weekly"} and deadline_alerts:
+    if mode == "weekly" and deadline_alerts:
         alert_groups = _items_by_tier(deadline_alerts)
         alert_sections = []
         for tier, title, _description, accent, tint in TIER_SECTIONS[:2]:
@@ -570,6 +662,7 @@ def dispatch_notifications(
     send: bool = False,
     sender: Callable[[str, EmailPayload], None] | None = None,
     now: datetime | None = None,
+    dashboard_url: str = PUBLIC_DASHBOARD_URL,
 ) -> list[DispatchResult]:
     current = now or seoul_now()
     normalized_daily_slot = ""
@@ -610,7 +703,7 @@ def dispatch_notifications(
                 )
                 if _notice_is_not_historical(row, baseline_at)
             ]
-            payload = _email_payload(mode, items, current)
+            payload = _email_payload(mode, items, current, dashboard_url=dashboard_url)
         elif mode in {"daily", "weekly"}:
             key = (
                 f"{current.strftime('%Y-%m-%d')}-{normalized_daily_slot.replace(':', '')}"
@@ -620,22 +713,22 @@ def dispatch_notifications(
             if notification_delivery_sent(connection, mode, key, recipient):
                 results.append(DispatchResult(recipient=recipient, mode=mode, skipped=1, message="이미 발송된 집계 기간입니다."))
                 continue
-            # Daily/weekly digests are an operational snapshot: include every
-            # currently active in-scope notice, not only rows first seen since the
-            # previous send. This prevents an open Tier 1/2 bid from disappearing
-            # from the user's morning/evening briefing after its first appearance.
-            items = [notice_view(row, current) for row in _active_notice_rows(connection, current)]
-            deadline_alerts = []
-            for row in _active_notice_rows(connection, current):
-                view = notice_view(row, current)
-                if view["deadline_priority"] and view["business_tier"] in {TIER_1, TIER_2}:
-                    deadline_alerts.append(view)
+            active_items = [notice_view(row, current) for row in _active_notice_rows(connection, current)]
+            items = (
+                [item for item in active_items if item["business_tier"] in {TIER_1, TIER_2} or _first_seen_today(item, current)]
+                if mode == "daily" else active_items
+            )
+            deadline_alerts = (
+                [item for item in active_items if item["deadline_priority"] and item["business_tier"] in {TIER_1, TIER_2}]
+                if mode == "weekly" else []
+            )
             payload = _email_payload(
                 mode,
                 items,
                 current,
                 daily_slot=normalized_daily_slot,
                 deadline_alerts=deadline_alerts,
+                dashboard_url=dashboard_url,
             )
         else:
             raise ValueError("mode must be immediate, daily, weekly, or test")
@@ -676,7 +769,9 @@ def notification_status(connection: Any, config: dict[str, Any]) -> dict[str, An
         "daily_send_times": _safe_daily_send_times(config.get("daily_send_times", [])),
         "weekly_send_day": str(config.get("weekly_send_day", "FRI")),
         "weekly_send_at": str(config.get("weekly_send_at", "18:00")),
+        "dashboard_url": str(config.get("dashboard_url") or PUBLIC_DASHBOARD_URL),
         "baseline_at": get_notification_setting(connection, BASELINE_SETTING),
+        "data_go_kr_service_key_ready": bool(os.getenv("DATA_GO_KR_SERVICE_KEY", "").strip()),
         "smtp_ready": readiness["ready"],
         "smtp_missing": readiness["missing"],
     }

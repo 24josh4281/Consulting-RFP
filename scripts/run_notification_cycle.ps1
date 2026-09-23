@@ -66,6 +66,46 @@ Invoke-Checked {
     --out reports\rfp_workbench_official.html
 } "render-workbench"
 
+function Publish-PublicDashboard {
+  $branch = (& git branch --show-current).Trim()
+  if ($LASTEXITCODE -ne 0 -or $branch -ne "main") {
+    throw "Public dashboard publishing requires the main branch."
+  }
+  $siteChanges = @(git status --porcelain -- site/index.html)
+  if ($LASTEXITCODE -ne 0 -or $siteChanges.Count -gt 0) {
+    throw "site/index.html has existing local changes; review them before scheduled publishing."
+  }
+  & git -c credential.interactive=never fetch --quiet origin main
+  if ($LASTEXITCODE -ne 0) { throw "Could not check the remote main branch." }
+  $localHead = (& git rev-parse HEAD).Trim()
+  $remoteHead = (& git rev-parse origin/main).Trim()
+  if ($localHead -ne $remoteHead) {
+    throw "Local main and origin/main differ; review them before scheduled publishing."
+  }
+
+  Invoke-Checked {
+    python -m rfp_tracker render-workbench `
+      --db $Database `
+      --out site\index.html `
+      --public
+  } "render-public-workbench"
+
+  & git diff --quiet -- site/index.html
+  if ($LASTEXITCODE -eq 0) { return }
+  if ($LASTEXITCODE -ne 1) { throw "Could not compare the public dashboard." }
+  & git add -- site/index.html
+  if ($LASTEXITCODE -ne 0) { throw "Could not stage the public dashboard." }
+  & git commit --only -m "chore: refresh public RFP dashboard" -- site/index.html
+  if ($LASTEXITCODE -ne 0) { throw "Could not commit the public dashboard." }
+  & git -c credential.interactive=never push origin main
+  if ($LASTEXITCODE -ne 0) { throw "Could not publish the public dashboard." }
+  Write-Host "[done] Public dashboard refreshed before email delivery."
+}
+
+if ($Send -and $Mode -in @("daily", "weekly", "daily-weekly")) {
+  Publish-PublicDashboard
+}
+
 function Invoke-NotificationDispatch {
   param(
     [string]$DispatchMode,

@@ -174,7 +174,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\connect_github.ps1 -RepoUrl "
 
 `https://24josh4281.github.io/Consulting-RFP/`
 
-공개 페이지를 최신화할 때는 로컬 수집·문서 추출 후 아래를 실행하고 `site/index.html`을 커밋·푸시합니다. 공개 Pages는 실시간 DB가 아니라 마지막 검증된 정적 스냅샷입니다.
+`run_notification_cycle.ps1 -Mode daily -Send`는 메일 발송 전에 공개 화면을 생성해 `main`에 반영합니다. 공개 Pages는 실시간 DB가 아니라 마지막 배포 스냅샷이며, 화면 상단에서 생성 시각을 확인할 수 있습니다. 수동으로 최신화할 때는 아래 명령을 사용합니다.
 
 ```powershell
 python -m rfp_tracker render-workbench --db data\rfp_tracker_official.db --out site\index.html --public
@@ -233,7 +233,7 @@ python -m rfp_tracker export-workbench-json --db data\rfp_tracker_official.db --
 node .\scripts\build_rfp_workbench_workbook.mjs --input outputs\rfp_workbench_data.json --output outputs\rfp_workbench.xlsx
 ~~~
 
-The workbench begins with an official-source-only Tier 1 priority area; sample records remain in the full list but are not treated as real opportunities. The dashboard, Excel export, and daily/weekly digest expose every currently active in-scope notice, with Tier 1 and Tier 2 shown first. Notices exactly 7 or 3 calendar days from their deadline receive D-7/D-3 priority labels in the dashboards, email briefing and Excel export. The workbook contains seven sheets: Dashboard, Notices, Document Summary, Fallback Info, New Notices, Sources, and Bid Fit Review. `신규공고` is a separate list of notices first collected today. Its yellow input columns provide a bordered review grid for consulting fit, qualifications, proposed team, bid decision, risks, and reviewer notes. It stores the listing amount and document-derived amount in separate fields with the source basis and evidence excerpt.
+The workbench begins with an official-source-only Tier 1 priority area; sample records remain in the full list but are not treated as real opportunities. The dashboard and Excel export expose every currently active in-scope notice, with Tier 1 and Tier 2 shown first. The daily email contains today's newly collected open notices across all Tiers and older, still-open Tier 1/2 notices; each notice appears once. Notices exactly 7 or 3 calendar days from their deadline receive D-7/D-3 priority labels in the dashboards, email briefing and Excel export. The workbook contains seven sheets: Dashboard, Notices, Document Summary, Fallback Info, New Notices, Sources, and Bid Fit Review. `신규공고` is a separate list of notices first collected today. Its yellow input columns provide a bordered review grid for consulting fit, qualifications, proposed team, bid decision, risks, and reviewer notes. It stores the listing amount and document-derived amount in separate fields with the source basis and evidence excerpt.
 
 Use the local command below when a reviewed decision should also appear in the internal dashboard. It changes only the separate bid-fit review record, never the source notice, attachment, or document evidence.
 
@@ -321,11 +321,11 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_notification_cycle.ps1 -M
 powershell -ExecutionPolicy Bypass -File .\scripts\install_notification_tasks.ps1 -Send
 ```
 
-등록되는 기본 일정은 신규 공고 확인 **30분마다**, 일일 브리핑 **매일 10:00·17:00 (KST)**, 주간 브리핑 **매주 금요일 18:00 (KST)** 입니다. 10시와 17시 브리핑은 각각 별도 발송 기록을 사용하므로, 같은 날에도 한 번씩 안전하게 발송됩니다. "즉시" 알림은 웹훅이 아니라 30분 폴링 기준이므로, 실제 반영 지연은 출처 게시 시간과 다음 폴링 시점에 따라 달라집니다.
+Windows 작업 스케줄러 설치 스크립트의 기본 일정은 신규 공고 확인 **30분마다**, 일일 브리핑 **매일 10:00·17:00 (KST)**, 주간 브리핑 **매주 금요일 18:00 (KST)** 입니다. 현재 Codex 예약 점검은 10시·17시 일일 브리핑과 금요일 18시 주간 브리핑을 실행합니다. 두 일일 브리핑은 시간대별 발송 기록으로 중복을 방지합니다.
 
-즉시 알림은 **Tier 1**만 전송합니다. 일일·주간 메일은 `INNERGEN CLIMATE INTELLIGENCE` 형식의 뉴스레터로 발송되며, 그 시점에 접수 중인 모든 관련 공고를 Tier 1(직접 컨설팅), Tier 2(고객사 추천), Tier 3(참고) 순서의 테두리 있는 표와 분류 근거·RFP/첨부·원문 링크로 보여 줍니다.
+즉시 알림은 **Tier 1**만 전송합니다. 일일 메일은 당일 처음 수집된 접수 중 공고(모든 Tier)와 기존에 수집되어 계속 접수 중인 Tier 1·2만 각각 한 번씩 보여 줍니다. 주간 메일은 기존 Tier별 현황을 유지합니다. 일일 메일의 간결한 테두리 표에는 공고명·기관·공고 금액·마감·원문 링크를 담고, 모든 첨부·입찰방식·상세 정보는 공개 대시보드에서 확인합니다. 상단 버튼과 일반 텍스트에도 대시보드 링크를 넣습니다. 기본 주소는 `configs/notifications.example.json`의 `dashboard_url`을 참조하며, 로컬 설정에서 같은 항목을 바꿀 수 있습니다.
 
-Codex의 30분 자동 확인과 Windows 작업 스케줄러는 **둘 중 하나만** 운영합니다. 둘 다 켜면 메일은 중복 방지되지만 API·출처 확인이 중복될 수 있습니다. 이 작업공간은 Codex 자동 확인(`rfp-30`)을 사용하는 상태이므로, 별도 Windows 작업 등록은 Codex를 사용하지 않을 때만 진행하세요.
+Codex 예약 작업과 Windows 작업 스케줄러는 **둘 중 하나만** 운영합니다. 둘 다 켜면 메일은 중복 방지되지만 API·출처 확인이 중복될 수 있습니다. 이 작업공간은 Codex 예약 작업(`rfp-30`)을 사용하는 상태이므로, 별도 Windows 작업 등록은 Codex를 사용하지 않을 때만 진행하세요. 현재 Codex 예약 작업은 10시·17시 일일 메일과 금요일 18시 주간 메일을 실행하며, 30분 즉시 알림은 실행하지 않습니다.
 
 생성되는 브리핑은 다음 파일에서도 확인할 수 있습니다.
 

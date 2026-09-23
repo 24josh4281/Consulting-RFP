@@ -1064,6 +1064,7 @@ def build_public_workbench_payload(connection: sqlite3.Connection) -> dict[str, 
         }
     )
     summary = {
+        "generated_at": seoul_now().strftime("%Y-%m-%d %H:%M KST"),
         "total_notices": len(public_notices),
         "active_notices": sum(1 for item in public_notices if item["is_active"]),
         "new_today": sum(1 for item in public_notices if item["is_new_today"]),
