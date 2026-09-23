@@ -882,7 +882,7 @@ class NotificationTests(unittest.TestCase):
             self.assertIn("INNERGEN CLIMATE INTELLIGENCE", newsletter)
             self.assertIn("오늘 신규 추가", newsletter)
             self.assertIn("Tier 1 · 이너젠 직접 컨설팅 검토", newsletter)
-            self.assertIn("Tier 2 · 고객사 설비·금융지원 추천", newsletter)
+            self.assertIn("Tier 2 · 고객사 기후지원 추천", newsletter)
             self.assertNotIn("Tier 3 · 참고 / 직접 컨설팅 비적합", newsletter)
             self.assertIn("border:1px solid #D1D5DB", newsletter)
             self.assertIn("온실가스 저감 설비 설치 지원", newsletter)

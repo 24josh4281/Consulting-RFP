@@ -667,6 +667,10 @@ def extract_g2b_spec_attachments(item: dict[str, Any]) -> list[Attachment]:
 
 def build_fetcher(source: dict[str, Any], keyword_config: dict[str, Any], global_config: dict[str, Any], root_dir: Path) -> BaseFetcher:
     source_type = source.get("type")
+    if source_type == "bizinfo_grant_api":
+        from .bizinfo_fetcher import BizinfoGrantApiFetcher
+
+        return BizinfoGrantApiFetcher(source, keyword_config, global_config, root_dir)
     if source_type == "official_grant_board":
         from .grant_fetchers import OfficialGrantFetcher
 

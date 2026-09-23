@@ -20,7 +20,7 @@ VISIBLE_BUSINESS_TIERS = frozenset({TIER_1, TIER_2})
 
 TIER_LABELS = {
     TIER_1: "Tier 1 · 이너젠 직접 컨설팅 검토",
-    TIER_2: "Tier 2 · 고객사 설비·금융지원 추천",
+    TIER_2: "Tier 2 · 고객사 기후지원 추천",
     TIER_3: "Tier 3 · 기후 관련 참고 공고",
     UNCLASSIFIED: "미분류 · 원문 확인 필요",
 }
@@ -85,7 +85,8 @@ SCIENCE_PROJECT = ("기술개발", "실증", "시험", "r&d")
 
 TIER_2_DOMAINS = (
     "탄소중립", "온실가스", "저탄소", "탈탄소", "탄소감축",
-    "배출권거래제", "배출권 거래제",
+    "배출권거래제", "배출권 거래제", "국제감축", "외부사업",
+    "cbam", "csrd", "issb", "기후공시", "기후 공시",
     "탄소 감축", "재생에너지", "신재생에너지", "에너지효율",
     "환경설비", "환경 설비", "친환경 설비", "오염저감설비", "오염 저감 설비",
 )
@@ -93,12 +94,13 @@ TIER_2_SUPPORT = (
     "지원사업", "지원 사업", "보조금", "지원금", "융자", "금리",
     "이차보전", "이자지원", "이자 지원", "자금지원", "자금 지원",
     "설비 지원", "설비지원", "설치 지원", "도입 지원", "투자 지원",
+    "투자지원", "기업지원",
 )
 TIER_2_EQUIPMENT_OR_FINANCE = (
     "설비", "시설", "장비", "설치", "도입", "설비투자", "효율화",
     "에너지전환", "공기압축기", "인버터", "히트펌프", "모터",
     "보일러", "자금", "융자", "금리", "이차보전", "이자지원",
-    "이자 지원", "재생에너지", "신재생에너지",
+    "이자 지원", "투자지원", "투자 지원", "재생에너지", "신재생에너지",
 )
 TIER_2_APPLICATION = (
     "모집", "신청", "공모", "접수", "참여기업", "지원대상",
@@ -185,10 +187,16 @@ def assess_innergen_tier(
     equipment = _signals(text, TIER_2_EQUIPMENT_OR_FINANCE)
     if category == "grant_application":
         # Design Ref: §3 — only the allowlisted official grant adapters set this category.
+        if _signals(text, SCIENCE_PROJECT) and not _signals(text, PLANNING_RESEARCH):
+            return TierAssessment(TIER_3, "제외: 기술개발·실증 자체는 고객사 컨설팅·설비지원 공고가 아님")
         if support_domain and equipment and (support or "경매사업" in text):
             signals = tuple(dict.fromkeys((*support_domain, *support, *equipment)))
             return TierAssessment(TIER_2, _reason("공식 고객사 설비지원 신청 공고", signals), signals)
-        return TierAssessment(TIER_3, "제외: 공식 신청 공고이나 고객사 설비지원 범위 확인 필요")
+        grant_work = _signals(text, TIER_1_WORK)
+        if support_domain and support and domain and grant_work:
+            signals = tuple(dict.fromkeys((*support_domain, *support, *grant_work)))
+            return TierAssessment(TIER_2, _reason("공식 고객사 기후컨설팅 지원 공고", signals), signals)
+        return TierAssessment(TIER_3, "제외: 공식 신청 공고이나 고객사 기후지원 범위 확인 필요")
     if support_domain and support and equipment and not category.startswith("g2b_"):
         accepting_applications = bool(_signals(text, TIER_2_APPLICATION))
         supplier_purchase = bool(_signals(text, GOODS_PROCUREMENT))

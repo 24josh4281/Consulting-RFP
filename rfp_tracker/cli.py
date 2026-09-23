@@ -202,7 +202,7 @@ def sync_command(args: argparse.Namespace) -> int:
             try:
                 notices = fetcher.fetch(days=args.days)
             except Exception as exc:
-                if source.get("type") != "official_grant_board":
+                if source.get("type") not in {"official_grant_board", "bizinfo_grant_api"}:
                     raise
                 # A public support-board outage must not suppress G2B collection
                 # or the scheduled client briefing. Preserve the failure signal.
@@ -947,7 +947,7 @@ def build_parser() -> argparse.ArgumentParser:
     sync.add_argument("--days", type=int, default=14)
     sync.add_argument(
         "--source-type",
-        choices=["official_grant_board"],
+        choices=["official_grant_board", "bizinfo_grant_api"],
         help="Only query the selected public source type; no G2B API request.",
     )
     sync.set_defaults(func=sync_command)

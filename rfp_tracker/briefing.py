@@ -60,7 +60,7 @@ def is_notice_active(row: Any, now: datetime | None = None) -> bool:
         if not isinstance(raw, dict):
             raw = {}
         status = str(raw.get("application_status") or "").replace(" ", "")
-        if any(marker in status for marker in ("접수마감", "접수종료", "모집마감", "신청마감", "취소")):
+        if any(marker in status for marker in ("마감", "접수종료", "취소")):
             return False
         start = parse_notice_datetime(raw.get("application_start_at"))
         if start and start > current:

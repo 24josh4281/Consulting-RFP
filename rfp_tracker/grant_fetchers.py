@@ -21,13 +21,14 @@ from .models import Attachment, Notice
 
 SEOUL = ZoneInfo("Asia/Seoul")
 DATE_RE = re.compile(r"(?<!\d)(20\d{2})\s*[./-]\s*(\d{1,2})\s*[./-]\s*(\d{1,2})(?!\d)")
-GRANT_DOMAIN = re.compile(r"탄소중립|배출권거래제|온실가스|탄소감축")
-GRANT_SUPPORT = re.compile(r"설비|시설|프로젝트 경매")
+GRANT_DOMAIN = re.compile(r"탄소중립|배출권거래제|온실가스|탄소감축|저탄소|국제감축|외부사업|CBAM|기후공시|기후 공시", re.I)
+GRANT_SUPPORT = re.compile(r"설비|시설|프로젝트 경매|융자|이차보전|이자지원|금리지원|투자지원|투자 지원|컨설팅|인벤토리", re.I)
 GRANT_CALL = re.compile(r"공고|모집")
-GRANT_FUNDING = re.compile(r"지원사업|지원\s*사업|경매사업|지원\s*(?:\([^)]*\))?\s*참여기업")
+GRANT_FUNDING = re.compile(r"지원사업|지원\s*사업|경매사업|융자지원|이차보전|기업지원|지원\s*(?:\([^)]*\))?\s*참여기업")
 EXCLUDED_ROLE = re.compile(
     r"수행사\s*모집|검증기관\s*모집|원가계산기관\s*모집|선정\s*결과"
     r"|구매\s*입찰|납품\s*입찰|시공\s*입찰|용역\s*입찰"
+    r"|평가\s*결과|기술평가결과|설명회|세미나|교육|행사|사전\s*안내"
 )
 
 
@@ -40,6 +41,20 @@ def is_customer_grant_title(title: str) -> bool:
         and GRANT_FUNDING.search(title)
         and not EXCLUDED_ROLE.search(title)
     )
+
+
+def is_customer_portfolio_grant(title: str) -> bool:
+    """Applicant-facing calls only; a generic ESG/energy tag is insufficient."""
+    if not is_customer_grant_title(title):
+        return False
+    text = title.casefold()
+    if re.search(r"기술개발|실증|시험|r&d", text) and not re.search(r"설비\s*(?:도입|설치|투자)|컨설팅", text):
+        return False
+    if re.search(r"컨설팅|인벤토리|공시", text):
+        return bool(re.search(r"온실가스|배출권|탄소|cbam|기후", text))
+    if "국제감축" in text or "외부사업" in text:
+        return True
+    return bool(re.search(r"설비|시설|융자|이차보전|이자지원|금리지원|투자지원|투자 지원|프로젝트 경매", text))
 
 
 def _plain(fragment: str) -> str:
@@ -80,7 +95,7 @@ def _date_time_at(segment: str, match: re.Match[str], *, is_deadline: bool, next
 def application_period(text: str) -> tuple[str, str]:
     """Read only a labelled application/receipt window, never arbitrary dates."""
     normalized = " ".join(html.unescape(text).split())
-    label = re.search(r"(?:신청|접수)\s*기간\s*[:：]?\s*", normalized)
+    label = re.search(r"(?:신청|접수)\s*(?:기간|기한)\s*[:：]?\s*", normalized)
     if not label:
         return "", ""
     segment = normalized[label.end():label.end() + 180]
@@ -184,8 +199,54 @@ def parse_kea_rows(page: str, base_url: str) -> list[dict[str, str]]:
     return rows
 
 
+def parse_keiti_rows(page: str, base_url: str) -> list[dict[str, str]]:
+    """Parse only official board cards, not linked related/recommended items."""
+    rows: list[dict[str, str]] = []
+    for match in re.finditer(
+        r'(?is)<a\b[^>]*href=["\']([^"\']*View\.do\?[^"\']*\bbcIdx=(\d+)[^"\']*)["\'][^>]*>(.*?)</a>',
+        page,
+    ):
+        card = match.group(3)
+        title_match = re.search(r'(?is)<span\b[^>]*class=["\']subject["\'][^>]*>(.*?)</span>', card)
+        date_match = re.search(r'(?is)<span\b[^>]*class=["\']date["\'][^>]*>(.*?)</span>', card)
+        title = _plain(title_match.group(1)) if title_match else ""
+        if not is_customer_portfolio_grant(title):
+            continue
+        rows.append({
+            "external_id": match.group(2),
+            "title": title,
+            "url": urljoin(base_url, html.unescape(match.group(1))),
+            "published_at": _normal_date(_plain(date_match.group(1))) if date_match else "",
+            "start_at": "", "deadline_at": "", "source_status": "",
+        })
+    return rows
+
+
+def parse_kicox_rows(page: str, base_url: str) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for match in re.finditer(r"(?is)<tr\b[^>]*>(.*?)</tr>", page):
+        cells = re.findall(r"(?is)<td\b[^>]*>(.*?)</td>", match.group(1))
+        if len(cells) < 4:
+            continue
+        link = re.search(r"(?is)fn_view\(['\"](PB_\d+)['\"]\)", cells[1])
+        if not link:
+            continue
+        title = _plain(cells[1])
+        status = "마감" if re.search(r"(?is)<span\b[^>]*>\s*마감\s*</span>", cells[1]) else ""
+        title = re.sub(r"^마감\s*", "", title)
+        if not is_customer_portfolio_grant(title):
+            continue
+        rows.append({
+            "external_id": link.group(1), "title": title,
+            "url": urljoin(base_url, "pbancView.do?" + urlencode({"seq": link.group(1)})),
+            "published_at": _normal_date(_plain(cells[3])),
+            "start_at": "", "deadline_at": "", "source_status": status,
+        })
+    return rows
+
+
 def public_attachments(page: str, detail_url: str, board: str) -> list[Attachment]:
-    if board not in {"kosmes", "keco"}:
+    if board not in {"kosmes", "keco", "keiti"}:
         return []  # KEA's fileUserDown(...) is not a public direct URL.
     marker = "download.act" if board == "kosmes" else "/download.do"
     allowed_host = OfficialGrantFetcher.HOSTS[board]
@@ -194,7 +255,7 @@ def public_attachments(page: str, detail_url: str, board: str) -> list[Attachmen
     for link in parse_links(page, detail_url):
         url = link["url"]
         parsed = urlsplit(url)
-        if marker not in url or url in seen or parsed.scheme != "https" or parsed.hostname != allowed_host:
+        if marker not in url.casefold() or url in seen or parsed.scheme != "https" or parsed.hostname != allowed_host:
             continue
         seen.add(url)
         label = link["text"] or "공고 첨부자료"
@@ -210,6 +271,8 @@ class OfficialGrantFetcher(BaseFetcher):
         "kosmes": "esg.kosmes.or.kr",
         "keco": "www.keco.or.kr",
         "kea": "min24.energy.or.kr",
+        "keiti": "www.keiti.re.kr",
+        "kicox": "www.kicox.or.kr",
     }
 
     def __init__(self, source: dict[str, Any], keyword_config: dict[str, Any], global_config: dict[str, Any], root_dir: Path) -> None:
@@ -243,16 +306,33 @@ class OfficialGrantFetcher(BaseFetcher):
                     if not rows:
                         break
                     time.sleep(delay)
-        else:
+        elif self.board == "kea":
             listing = fetch_text(base_url, timeout, agent)
             for row in parse_kea_rows(listing, base_url):
+                candidates[row["external_id"]] = row
+        elif self.board == "keiti":
+            for page_number in range(1, max_pages + 1):
+                url = base_url + ("&" if "?" in base_url else "?") + urlencode({"pageIndex": page_number})
+                listing = fetch_text(url, timeout, agent)
+                rows = parse_keiti_rows(listing, base_url)
+                for row in rows:
+                    candidates[row["external_id"]] = row
+                time.sleep(delay)
+        else:
+            listing = fetch_text(base_url, timeout, agent)
+            for row in parse_kicox_rows(listing, base_url):
                 candidates[row["external_id"]] = row
 
         now = datetime.now(SEOUL)
         notices: list[Notice] = []
         for row in list(candidates.values())[:max_details]:
+            detail_url = urlsplit(row["url"])
+            if detail_url.scheme != "https" or detail_url.hostname != self.HOSTS[self.board]:
+                continue
             # KOSMES exposes the official deadline/status in the list. Closed old
             # calls need no extra requests on the 3-day scheduled cycle.
+            if row["source_status"] in {"마감", "접수마감", "접수종료"} and not _keep_notice(row["published_at"], "", days, now):
+                continue
             if self.board == "kosmes" and not _keep_notice(row["start_at"], row["deadline_at"], days, now):
                 continue
             detail = fetch_text(row["url"], timeout, agent)
