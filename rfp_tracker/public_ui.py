@@ -36,6 +36,15 @@ h2 { margin:0; font-size:21px; line-height:1.3; } .section-head p { margin:5px 0
 .lead-card h3 a { color:#153d42; } .lead-card p { margin:0 0 10px; color:var(--muted); font-size:13px; }
 .lead-card dl { display:flex; flex-wrap:wrap; gap:10px 22px; margin:0; font-size:12px; }
 .lead-card dt { color:var(--muted); } .lead-card dd { margin:0; font-weight:700; }
+.urgent-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:12px; list-style:none; padding:0; margin:0; }
+.urgent-item { border:1px solid #d7dfe7; border-left:5px solid #b7791f; border-radius:10px; padding:14px; background:#fcfdfd; }
+.urgent-item.urgent-red { border-left-color:#c53030; } .urgent-item.urgent-deep-red { border-left-color:#7f1d1d; }
+.urgent-item h3 { margin:8px 0 5px; font-size:15px; line-height:1.4; }
+.urgent-item p { margin:0; color:var(--muted); font-size:12px; }
+.urgent-topline { display:flex; align-items:center; flex-wrap:wrap; gap:7px; }
+.urgent-topline .deadline-priority { margin-left:0; }
+.urgent-tier { font-size:11px; font-weight:800; }
+.urgent-tier.tier_1 { color:#206642; } .urgent-tier.tier_2 { color:#80561b; }
 .detail-link { display:inline-block; margin-top:11px; font-size:12px; font-weight:700; }
 .empty-lead { grid-column:1/-1; padding:20px; border:1px dashed #abcac2; border-radius:10px; background:#f7fbfa; color:#35545a; }
 .filters { display:grid; grid-template-columns:minmax(220px,2fr) repeat(5,minmax(125px,1fr)); gap:10px; align-items:end; }
@@ -106,7 +115,7 @@ function matches(row) {
     && (!tier || row.dataset.tier === tier)
     && (!noticeType || row.dataset.noticeType === noticeType)
     && (!active || row.dataset.active === active)
-    && (!priority || row.dataset.deadlinePriority === priority)
+    && (!priority || (priority === 'urgent' ? row.dataset.urgent === 'true' : row.dataset.deadlineGroup === priority))
     && (!source || row.dataset.source === source)
     && (!documentStatus || row.dataset.document === documentStatus)
     && (!deadline || (row.dataset.deadline && row.dataset.deadline <= deadline));

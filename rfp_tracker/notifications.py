@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
 
-from .briefing import is_notice_active, notice_view, parse_notice_datetime, seoul_now
+from .briefing import deadline_priority_group, is_notice_active, notice_view, parse_notice_datetime, seoul_now
 from .config import read_json, write_json
 from .storage import (
     get_notification_setting,
@@ -244,6 +244,8 @@ def _display_deadline(item: dict[str, Any]) -> str:
         return deadline
     if item["days_remaining"] < 0:
         return f"{deadline} (마감 경과)"
+    if item["days_remaining"] == 0:
+        return f"{deadline} ({'D-DAY' if item['is_active'] else '마감 경과'})"
     return f"{deadline} (D-{item['days_remaining']})"
 
 
@@ -335,6 +337,22 @@ def _document_links(item: dict[str, Any]) -> str:
     return f'<span style="color:#6B7280;">{missing}</span>'
 
 
+def _email_deadline_badge(priority: str) -> str:
+    group = deadline_priority_group(priority)
+    if not group:
+        return ""
+    border, background, color = {
+        "red": ("#E2AAA5", "#FBE7E5", "#8A2A26"),
+        "yellow": ("#E7C66C", "#FFF3D6", "#7B5510"),
+        "deep-red": ("#5B1010", "#7F1D1D", "#FFFFFF"),
+    }[group]
+    return (
+        '<span style="display:inline-block;padding:3px 7px;'
+        f'border:1px solid {border};background:{background};color:{color};'
+        f'font-size:11px;font-weight:800;">{html.escape(priority)}</span>'
+    )
+
+
 def _notice_table(items: list[dict[str, Any]], tier: str, accent: str, tint: str) -> str:
     if not items:
         return (
@@ -362,12 +380,8 @@ def _notice_table(items: list[dict[str, Any]], tier: str, accent: str, tint: str
         reason = html.escape(str(item.get("tier_reason") or "원문 확인 필요"))
         title = html.escape(str(item["title"]))
         deadline_priority = str(item.get("deadline_priority") or "")
-        priority_badge = (
-            f'<span style="display:inline-block;margin:0 0 6px 0;padding:3px 7px;border:1px solid {"#C53030" if deadline_priority == "D-3" else "#B7791F"};'
-            f'background:{"#FBE7E5" if deadline_priority == "D-3" else "#FFF3D6"};color:{"#8A2A26" if deadline_priority == "D-3" else "#7B5510"};font-size:11px;font-weight:800;">'
-            f'{html.escape(deadline_priority)} 중요 마감</span><br>'
-            if deadline_priority else ""
-        )
+        badge = _email_deadline_badge(deadline_priority)
+        priority_badge = f'{badge}<br>' if badge else ""
         keyword_text = html.escape(", ".join(item["matched_keywords"]) or "-")
         tier_badge = (
             f'<span style="display:inline-block;margin:0 0 6px 0;padding:3px 7px;border:1px solid #B7C9DB;'
@@ -412,9 +426,9 @@ def _daily_notice_table(items: list[dict[str, Any]], accent: str, tint: str) -> 
         tier = html.escape(tier_short_label(str(item.get("business_tier") or UNCLASSIFIED)))
         buyer = html.escape(str(item.get("buyer") or item["source_name"]))
         budget = html.escape(_display_budget(item))
-        deadline = html.escape(_display_deadline(item))
-        priority = html.escape(str(item.get("deadline_priority") or ""))
-        priority_text = f' <strong style="color:#A72B22;">{priority}</strong>' if priority else ""
+        badge = _email_deadline_badge(str(item.get("deadline_priority") or ""))
+        deadline = html.escape(str(item.get("deadline_at") or "마감일 미수집") if badge else _display_deadline(item))
+        priority_text = f' {badge}' if badge else ""
         rows.append(
             '<tr><td style="border:1px solid #D1D5DB;padding:8px;font-size:12px;line-height:1.45;">'
             f'<strong>{linked_title}</strong><br>{tier} · {buyer} · {budget}</td>'
@@ -558,7 +572,7 @@ def _email_payload(
     text_lines = [subject, "", intro, ""]
     if mode == "weekly" and deadline_alerts:
         alert_groups = _items_by_tier(deadline_alerts)
-        text_lines.append("[D-7 / D-3 중요 마감 · Tier 1/2]")
+        text_lines.append("[마감 임박 · Tier 1/2 · D-7 이내]")
         for tier in (TIER_1, TIER_2):
             if alert_groups[tier]:
                 text_lines.extend(
@@ -604,8 +618,8 @@ def _email_payload(
         alert_html = (
             '<table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td style="padding:0 26px 22px 26px;">'
             '<div style="border-left:5px solid #C53030;padding:2px 0 2px 10px;margin:0 0 8px 0;">'
-            f'<div style="font-size:16px;font-weight:800;color:#8A2A26;">D-7 / D-3 중요 마감 <span style="font-size:13px;color:#4B5563;">{len(deadline_alerts)}건</span></div>'
-            '<div style="font-size:12px;color:#4B5563;line-height:1.5;margin-top:3px;">Tier 1/2 공고 중 마감일까지 정확히 7일 또는 3일 남은 건입니다.</div></div>'
+            f'<div style="font-size:16px;font-weight:800;color:#8A2A26;">마감 임박 · Tier 1/2 <span style="font-size:13px;color:#4B5563;">{len(deadline_alerts)}건</span></div>'
+            '<div style="font-size:12px;color:#4B5563;line-height:1.5;margin-top:3px;">접수 중인 Tier 1/2 공고 중 마감까지 D-7~D-DAY인 건입니다.</div></div>'
             f'{"".join(alert_sections)}</td></tr></table>'
         )
         footer_marker = '<tr><td style="padding:16px 26px 22px 26px;background:#F8FAF9;'
@@ -751,7 +765,10 @@ def dispatch_notifications(
             active_items = [notice_view(row, current) for row in _active_notice_rows(connection, current)]
             items = [item for item in active_items if item["business_tier"] in {TIER_1, TIER_2}]
             deadline_alerts = (
-                [item for item in active_items if item["deadline_priority"] and item["business_tier"] in {TIER_1, TIER_2}]
+                sorted(
+                    (item for item in active_items if item["deadline_priority"] and item["business_tier"] in {TIER_1, TIER_2}),
+                    key=lambda item: (int(item["days_remaining"]), 0 if item["business_tier"] == TIER_1 else 1),
+                )
                 if mode == "weekly" else []
             )
             payload = _email_payload(

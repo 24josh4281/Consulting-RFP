@@ -840,6 +840,7 @@ def build_workbench_payload(
         first_seen_at = str(row["first_seen_at"] or "")
         deadline = parse_notice_datetime(row["deadline_at"])
         days_remaining = (deadline.date() - current_date).days if deadline else None
+        is_active = is_notice_active(row, current)
         priority_status, priority_rank, priority_reason = _priority_metadata(
             source_id=source_id,
             notice_url=notice_url,
@@ -863,8 +864,8 @@ def build_workbench_payload(
                 ),
                 "deadline_at": str(row["deadline_at"] or ""),
                 "days_remaining": days_remaining,
-                "is_active": is_notice_active(row, current),
-                "deadline_priority": deadline_priority_label(days_remaining),
+                "is_active": is_active,
+                "deadline_priority": deadline_priority_label(days_remaining) if is_active else "",
                 "buyer": str(row["buyer"] or ""),
                 "budget": str(row["budget"] or ""),
                 "budget_value_krw": _listing_budget_to_krw(row["budget"]),

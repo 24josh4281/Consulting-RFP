@@ -43,8 +43,21 @@ def parse_notice_datetime(value: object) -> datetime | None:
 
 
 def deadline_priority_label(days_remaining: int | None) -> str:
-    """Highlight notices exactly seven or three calendar days before deadline."""
-    return f"D-{days_remaining}" if days_remaining in {7, 3} else ""
+    """Label every deadline in the inclusive D-7 through D-DAY window."""
+    if days_remaining is None or not 0 <= days_remaining <= 7:
+        return ""
+    return "D-DAY" if days_remaining == 0 else f"D-{days_remaining}"
+
+
+def deadline_priority_group(priority: str) -> str:
+    """Return the requested colour band for a deadline label."""
+    if priority == "D-DAY":
+        return "deep-red"
+    if priority in {"D-1", "D-2", "D-3"}:
+        return "red"
+    if priority in {"D-4", "D-5", "D-6", "D-7"}:
+        return "yellow"
+    return ""
 
 
 def is_notice_active(row: Any, now: datetime | None = None) -> bool:
@@ -99,6 +112,7 @@ def notice_view(row: Any, now: datetime | None = None) -> dict[str, Any]:
     deadline = parse_notice_datetime(row["deadline_at"])
     days_remaining = (deadline.date() - current.date()).days if deadline else None
     attachments = _json_list(row["attachments_json"] if "attachments_json" in row.keys() else "[]")
+    is_active = is_notice_active(row, current)
     return {
         "id": int(row["id"]),
         "title": str(row["title"]),
@@ -108,12 +122,12 @@ def notice_view(row: Any, now: datetime | None = None) -> dict[str, Any]:
         "budget": str(row["budget"] or ""),
         "procurement_method": str(row["procurement_method"] or ""),
         "category": str(row["category"] or "") if "category" in row.keys() else "",
-        "is_active": is_notice_active(row, current),
+        "is_active": is_active,
         "published_at": str(row["published_at"] or ""),
         "deadline_at": str(row["deadline_at"] or ""),
         "deadline": deadline,
         "days_remaining": days_remaining,
-        "deadline_priority": deadline_priority_label(days_remaining),
+        "deadline_priority": deadline_priority_label(days_remaining) if is_active else "",
         "relevance_score": int(row["relevance_score"]),
         "review_status": str(row["review_status"]),
         "business_tier": str(row["business_tier"] if "business_tier" in row.keys() else "unclassified"),
@@ -235,6 +249,8 @@ def _display_deadline(item: dict[str, Any]) -> str:
         return item["deadline_at"]
     if item["days_remaining"] < 0:
         return f"{item['deadline_at']} (마감 경과)"
+    if item["days_remaining"] == 0:
+        return f"{item['deadline_at']} ({'D-DAY' if item['is_active'] else '마감 경과'})"
     return f"{item['deadline_at']} (D-{item['days_remaining']})"
 
 

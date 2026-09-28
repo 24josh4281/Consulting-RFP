@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from urllib.parse import urlparse
 
+from .briefing import deadline_priority_group
 from .documents import extraction_status_label
 from .public_ui import PUBLIC_DASHBOARD_CSS, PUBLIC_DASHBOARD_JS
 from .tiering import tier_label, tier_short_label
@@ -305,15 +306,59 @@ def _priority_card(notice: dict[str, object]) -> str:
 
 
 def _deadline_priority_badge(priority: str) -> str:
-    if priority not in {"D-7", "D-3"}:
+    group = deadline_priority_group(priority)
+    if not group:
         return ""
-    border = "#E2AAA5" if priority == "D-3" else "#E7C66C"
-    background = "#FBE7E5" if priority == "D-3" else "#FFF3D6"
-    color = "#8A2A26" if priority == "D-3" else "#7B5510"
+    border, background, color = {
+        "red": ("#E2AAA5", "#FBE7E5", "#8A2A26"),
+        "yellow": ("#E7C66C", "#FFF3D6", "#7B5510"),
+        "deep-red": ("#5B1010", "#7F1D1D", "#FFFFFF"),
+    }[group]
     return (
-        f'<span class="deadline-priority {priority.lower()}" style="border-color:{border};'
-        f'background:{background};color:{color};">{priority} 중요</span>'
+        f'<span class="deadline-priority deadline-{group}" style="border-color:{border};'
+        f'background:{background};color:{color};">{html.escape(priority)}</span>'
     )
+
+
+def _is_urgent_tier_notice(notice: dict[str, object]) -> bool:
+    return bool(
+        notice.get("is_active")
+        and notice.get("business_tier") in {"tier_1", "tier_2"}
+        and deadline_priority_group(str(notice.get("deadline_priority") or ""))
+    )
+
+
+def _urgent_notices(notices: list[dict[str, object]]) -> list[dict[str, object]]:
+    day_order = {"D-DAY": 0, **{f"D-{day}": day for day in range(1, 8)}}
+    return sorted(
+        (notice for notice in notices if _is_urgent_tier_notice(notice)),
+        key=lambda notice: (
+            day_order[str(notice["deadline_priority"])],
+            0 if notice.get("business_tier") == "tier_1" else 1,
+            int(notice.get("id") or 0),
+        ),
+    )
+
+
+def _urgent_notice_list_html(notices: list[dict[str, object]]) -> str:
+    if not notices:
+        return '<li class="empty-lead">현재 접수 중인 Tier 1·2의 D-7 이내 공고는 없습니다.</li>'
+    parts: list[str] = []
+    for notice in notices:
+        tier = str(notice.get("business_tier") or "")
+        tier_label = "Tier 1 · 직접 컨설팅" if tier == "tier_1" else "Tier 2 · 고객사 지원"
+        deadline = str(notice.get("deadline_at") or "")
+        priority = str(notice.get("deadline_priority") or "")
+        group = deadline_priority_group(priority)
+        parts.append(
+            f'<li class="urgent-item urgent-{group}">'
+            f'<div class="urgent-topline"><span class="urgent-tier {html.escape(tier, quote=True)}">{tier_label}</span>'
+            f'{_deadline_priority_badge(priority)}</div>'
+            f'<h3>{_external_link(notice.get("url"), notice.get("title"))}</h3>'
+            f'<p>{html.escape(str(notice.get("buyer") or notice.get("source_name") or "기관 미수집"))}'
+            f' · 마감 {html.escape(deadline)}</p></li>'
+        )
+    return "".join(parts)
 
 
 def _new_notice_rows(notices: list[dict[str, object]]) -> str:
@@ -378,6 +423,7 @@ def render_workbench_dashboard(
         notice for notice in notices
         if notice.get("is_new_today") and notice.get("is_active") and notice.get("priority_status") == "official_tier_1"
     ]
+    urgent_notices = _urgent_notices(notices)
 
     cards = [
         ("전체 공고", summary.get("total_notices", len(notices)), "navy"),
@@ -388,8 +434,7 @@ def render_workbench_dashboard(
         ("현재 접수 중 Tier 1", summary.get("active_tier_1", 0), "green"),
         ("현재 접수 중 Tier 2", summary.get("active_tier_2", 0), "amber"),
         ("현재 접수 중 Tier 3", summary.get("active_tier_3", 0), "gray"),
-        ("D-7 중요 마감", summary.get("deadline_d7", 0), "amber"),
-        ("D-3 중요 마감", summary.get("deadline_d3", 0), "red"),
+        ("마감 임박", len(urgent_notices), "red"),
         ("공개 원문 추출 완료", summary.get("extracted_documents", 0), "blue"),
         ("첨부 URL 확인 필요", summary.get("missing_document_urls", 0), "red"),
     ]
@@ -442,6 +487,7 @@ def render_workbench_dashboard(
         priority_status = str(notice.get("priority_status") or "not_priority")
         deadline = str(notice.get("deadline_at") or "")
         deadline_priority = str(notice.get("deadline_priority") or "")
+        deadline_group = deadline_priority_group(deadline_priority)
         keywords = notice.get("matched_keywords") or []
         keywords_text = ", ".join(str(item) for item in keywords)
         primary = dict(notice.get("primary_insight") or {})
@@ -481,6 +527,8 @@ def render_workbench_dashboard(
                 data-document="{html.escape(document_status, quote=True)}"
                 data-priority="{html.escape(priority_status, quote=True)}"
                 data-deadline-priority="{html.escape(deadline_priority, quote=True)}"
+                data-deadline-group="{deadline_group}"
+                data-urgent="{'true' if _is_urgent_tier_notice(notice) else 'false'}"
                 data-deadline="{html.escape(deadline[:10], quote=True)}"
                 data-search="{html.escape(search_text, quote=True)}">
               <td><span class="tier-badge tier-{html.escape(tier, quote=True)}">{html.escape(tier_label_text)}</span></td>
@@ -573,7 +621,15 @@ def render_workbench_dashboard(
     .kpi-card.gray {{ border-top-color: #718096; }} .kpi-card.blue {{ border-top-color: #2B6CB0; }}
     .kpi-card.red {{ border-top-color: #C53030; }}
     .deadline-priority {{ display:inline-block; padding:3px 7px; border:1px solid #E7C66C; background:#FFF3D6; color:#7B5510; font-size:11px; font-weight:800; white-space:nowrap; }}
-    .deadline-priority.d-3 {{ border-color:#E2AAA5; background:#FBE7E5; color:#8A2A26; }}
+    .urgent-list {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(290px,1fr)); gap:12px; list-style:none; padding:0; margin:0; }}
+    .urgent-item {{ border:1px solid #D5DEE8; border-left:5px solid #B7791F; padding:13px; background:#FCFDFE; }}
+    .urgent-item.urgent-red {{ border-left-color:#C53030; }} .urgent-item.urgent-deep-red {{ border-left-color:#7F1D1D; }}
+    .urgent-item h3 {{ margin:8px 0 5px; font-size:15px; line-height:1.4; }}
+    .urgent-item p {{ margin:0; color:var(--muted); font-size:12px; }}
+    .urgent-topline {{ display:flex; align-items:center; flex-wrap:wrap; gap:7px; }}
+    .urgent-tier {{ font-size:11px; font-weight:800; }}
+    .urgent-tier.tier_1 {{ color:#205D36; }} .urgent-tier.tier_2 {{ color:#80561b; }}
+    .urgent-topline .deadline-priority {{ margin-left:0; }}
     .panel {{ background: white; border: 1px solid var(--line); padding: 18px; margin-top: 16px; }}
     .priority-panel {{ border-top: 5px solid #2B7A4B; }}
     .priority-heading {{ display: flex; justify-content: space-between; gap: 16px; align-items: center; margin-bottom: 12px; }}
@@ -636,6 +692,10 @@ def render_workbench_dashboard(
       <p>기후·온실가스·배출권·외부사업 관련 공고를 Tier 1 직접 컨설팅, Tier 2 고객사 지원, Tier 3 기타 관련 참고로 구분합니다. Tier 3는 추천이나 입찰 적합성 판단이 아닙니다. 최종 판단은 담당자가 원문으로 확인해야 합니다.</p>
     </header>
     <section class="kpis">{card_html}</section>
+    <section class="panel" id="urgent-deadlines">
+      <div class="priority-heading"><div><h2>마감 임박</h2><p>현재 접수 중이며 마감일까지 D-7~D-DAY인 Tier 1·2 직접 컨설팅·고객사 지원 공고 {len(urgent_notices)}건입니다.</p></div></div>
+      <ul class="urgent-list">{_urgent_notice_list_html(urgent_notices)}</ul>
+    </section>
     <section class="panel priority-panel">
       <div class="priority-heading">
         <div>
@@ -653,7 +713,7 @@ def render_workbench_dashboard(
         <div><label for="tier">Tier</label><select id="tier"><option value="">전체</option><option value="tier_1">Tier 1</option><option value="tier_2">Tier 2</option><option value="tier_3">Tier 3 · 관련 참고</option></select></div>
         <div><label for="active">접수 상태</label><select id="active"><option value="">전체</option><option value="active">현재 접수 중</option><option value="inactive">마감 경과·확인 필요</option></select></div>
         <div><label for="priority">우선 검토</label><select id="priority"><option value="">전체</option><option value="official_tier_1">Tier 1 공식 우선</option></select></div>
-        <div><label for="deadline-priority">중요 마감</label><select id="deadline-priority"><option value="">전체</option><option value="D-7">D-7</option><option value="D-3">D-3</option></select></div>
+        <div><label for="deadline-priority">마감 임박</label><select id="deadline-priority"><option value="">전체</option><option value="urgent">Tier 1·2 D-7 이내</option><option value="yellow">D-7~D-4 · 노랑</option><option value="red">D-3~D-1 · 빨강</option><option value="deep-red">D-DAY · 진한 빨강</option></select></div>
         <div><label for="review">검토 상태</label><select id="review"><option value="">전체</option>{review_select}</select></div>
         <div><label for="source">출처</label><select id="source"><option value="">전체</option>{source_select}</select></div>
         <div><label for="document">문서 상태</label><select id="document"><option value="">전체</option>{document_select}</select></div>
@@ -690,7 +750,7 @@ def render_workbench_dashboard(
         const matchesTier = !tier || row.dataset.tier === tier;
         const matchesActive = !active || row.dataset.active === active;
         const matchesPriority = !priority || row.dataset.priority === priority;
-        const matchesDeadlinePriority = !deadlinePriority || row.dataset.deadlinePriority === deadlinePriority;
+        const matchesDeadlinePriority = !deadlinePriority || (deadlinePriority === "urgent" ? row.dataset.urgent === "true" : row.dataset.deadlineGroup === deadlinePriority);
         const matchesReview = !review || row.dataset.review === review;
         const matchesSource = !source || row.dataset.source === source;
         const matchesDocument = !documentStatus || row.dataset.document === documentStatus;
@@ -737,6 +797,7 @@ def _render_public_workbench_dashboard(payload: dict[str, object], path: Path) -
         {str(notice.get("document_status") or "not_attempted") for notice in notices}
     )
     new_tier_1_items = [item for item in notices if item.get("is_new_tier_1")]
+    urgent_notices = _urgent_notices(notices)
     grant_total = sum(1 for item in notices if item.get("notice_type") == "grant_application")
     grant_active = sum(1 for item in notices if item.get("notice_type") == "grant_application" and item.get("is_active"))
     cards = [
@@ -744,7 +805,7 @@ def _render_public_workbench_dashboard(payload: dict[str, object], path: Path) -
         ("접수 중 Tier 1", summary.get("active_tier_1", 0), "active", "#notice-list"),
         ("접수 중 Tier 2", summary.get("active_tier_2", 0), "support", "#notice-list"),
         ("접수 중 Tier 3", summary.get("active_tier_3", 0), "reference", "#notice-list"),
-        ("D-7 · D-3 중요 마감", int(summary.get("deadline_d7", 0)) + int(summary.get("deadline_d3", 0)), "urgent", "#notice-list"),
+        ("마감 임박", len(urgent_notices), "urgent", "#urgent-deadlines"),
     ]
     card_parts: list[str] = []
     for label, value, tone, href in cards:
@@ -770,6 +831,7 @@ def _render_public_workbench_dashboard(payload: dict[str, object], path: Path) -
         status = str(notice.get("document_status") or "not_attempted")
         deadline = str(notice.get("deadline_at") or "")
         deadline_priority = str(notice.get("deadline_priority") or "")
+        deadline_group = deadline_priority_group(deadline_priority)
         primary = dict(notice.get("primary_insight") or {})
         summary_text = str(primary.get("task_summary") or "")
         amount_text = str(primary.get("amount_text") or "")
@@ -799,7 +861,7 @@ def _render_public_workbench_dashboard(payload: dict[str, object], path: Path) -
             method_label = "입찰 방식"
         rows.append(
             f"""
-            <tr id="notice-{int(notice['id'])}" class="notice-row" data-tier="{html.escape(tier, quote=True)}" data-notice-type="{html.escape(notice_type, quote=True)}" data-active="{'active' if notice.get('is_active') else 'inactive'}" data-source="{html.escape(source_name, quote=True)}" data-document="{html.escape(status, quote=True)}" data-deadline-priority="{html.escape(deadline_priority, quote=True)}" data-deadline="{html.escape(deadline[:10], quote=True)}" data-search="{html.escape(search_text, quote=True)}">
+            <tr id="notice-{int(notice['id'])}" class="notice-row" data-tier="{html.escape(tier, quote=True)}" data-notice-type="{html.escape(notice_type, quote=True)}" data-active="{'active' if notice.get('is_active') else 'inactive'}" data-source="{html.escape(source_name, quote=True)}" data-document="{html.escape(status, quote=True)}" data-deadline-priority="{html.escape(deadline_priority, quote=True)}" data-deadline-group="{deadline_group}" data-urgent="{'true' if _is_urgent_tier_notice(notice) else 'false'}" data-deadline="{html.escape(deadline[:10], quote=True)}" data-search="{html.escape(search_text, quote=True)}">
               <td data-label="공고" class="title"><span class="tier-tag {html.escape(tier, quote=True)}">{tier_label_text}</span><span class="type-tag {html.escape(notice_type, quote=True)}">{'지원금 신청' if is_grant else '입찰·구매'}</span><div class="notice-title">{_external_link(notice.get('url'), notice.get('title'))}</div><div class="meta">{html.escape(source_name)} · {html.escape(str(notice.get('published_at') or '공고일 미수집'))}</div></td>
               <td data-label="{'운영기관' if is_grant else '발주기관'}">{html.escape(str(notice.get('buyer') or '미수집'))}</td>
               <td data-label="{'신청 마감' if is_grant else '입찰 마감'}"><div class="deadline-cell"><span class="active-status {'active' if notice.get('is_active') else 'inactive'}">{state_label}</span>{_deadline_priority_badge(deadline_priority)}<div class="date">{html.escape(deadline or '마감일 미수집')}</div></div></td>
@@ -838,6 +900,10 @@ def _render_public_workbench_dashboard(payload: dict[str, object], path: Path) -
     <div class="hero-meta"><span>나라장터 및 공식 출처</span><span>마지막 갱신 {html.escape(str(summary.get('generated_at') or '미확인'))}</span><span>공개 스냅샷</span></div>
   </header>
   <section class="kpis" aria-label="핵심 현황">{card_html}</section>
+  <section id="urgent-deadlines" class="panel" aria-labelledby="urgent-heading">
+    <div class="section-head"><div><h2 id="urgent-heading">마감 임박</h2><p>접수 중인 Tier 1·2 직접 컨설팅·고객사 지원 공고 중 마감까지 D-7~D-DAY인 건만 표시합니다.</p></div><span class="section-count">{len(urgent_notices)}건</span></div>
+    <ul class="urgent-list">{_urgent_notice_list_html(urgent_notices)}</ul>
+  </section>
   <aside class="grant-callout" aria-label="고객사 지원사업 현황"><div><strong>고객사 지원사업 · 현재 신청 가능 {grant_active}건</strong><p>공식 참여기업 모집공고 {grant_total}건을 별도 수집했습니다. 마감된 공고도 다음 모집을 준비할 때 확인할 수 있습니다.</p></div><button id="grant-all" type="button">지원사업 전체 보기 →</button></aside>
   <section id="new-tier1" class="panel" aria-labelledby="new-heading">
     <div class="section-head"><div><h2 id="new-heading">오늘 신규 Tier 1</h2><p>오늘 처음 수집한 접수 중 직접 컨설팅 후보만 표시합니다.</p></div><span class="section-count">{len(new_tier_1_items)}건</span></div>
@@ -850,7 +916,7 @@ def _render_public_workbench_dashboard(payload: dict[str, object], path: Path) -
       <div><label for="tier">업무 적합성</label><select id="tier"><option value="">Tier 1·2·3 전체</option><option value="tier_1">Tier 1 · 직접 컨설팅</option><option value="tier_2">Tier 2 · 고객사 지원</option><option value="tier_3">Tier 3 · 관련 참고</option></select></div>
       <div><label for="notice-type">공고 유형</label><select id="notice-type"><option value="">전체 유형</option><option value="grant_application">고객사 지원금 신청</option><option value="procurement_bid">입찰·구매 공고</option></select></div>
       <div><label for="active">접수 상태</label><select id="active"><option value="active" selected>접수 중</option><option value="">전체</option><option value="inactive">마감 경과·확인</option></select></div>
-      <div><label for="deadline-priority">중요 마감</label><select id="deadline-priority"><option value="">전체</option><option value="D-7">D-7</option><option value="D-3">D-3</option></select></div>
+      <div><label for="deadline-priority">마감 임박</label><select id="deadline-priority"><option value="">전체</option><option value="urgent">Tier 1·2 D-7 이내</option><option value="yellow">D-7~D-4 · 노랑</option><option value="red">D-3~D-1 · 빨강</option><option value="deep-red">D-DAY · 진한 빨강</option></select></div>
       <div><label for="source">출처</label><select id="source"><option value="">전체</option>{source_select}</select></div>
     </div>
     <div class="filter-actions"><details class="advanced"><summary>상세 필터</summary><div class="advanced-grid"><div><label for="document">문서 상태</label><select id="document"><option value="">전체</option>{document_select}</select></div><div><label for="deadline">마감일 이전</label><input id="deadline" type="date"></div></div></details><button id="reset" type="button">필터 초기화</button></div>
