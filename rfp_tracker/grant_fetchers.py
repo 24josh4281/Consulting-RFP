@@ -3,20 +3,24 @@ from __future__ import annotations
 """Bounded readers for public, applicant-facing climate equipment grant boards.
 
 Design Ref: official-grant-notice-intake §2 — keep grant parsing separate from G2B bids.
-No login, POST, or attachment download is performed here.
+No login or POST is performed. Confirmed KEITI project calls may read one
+official announcement PDF to verify their application period.
 """
 
 import html
+import io
 import re
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode, urljoin, urlsplit
+from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 from .fetchers import BaseFetcher, fetch_text, parse_links
 from .models import Attachment, Notice
+from .tiering import is_overseas_feasibility_project_call
 
 
 SEOUL = ZoneInfo("Asia/Seoul")
@@ -210,7 +214,7 @@ def parse_keiti_rows(page: str, base_url: str) -> list[dict[str, str]]:
         title_match = re.search(r'(?is)<span\b[^>]*class=["\']subject["\'][^>]*>(.*?)</span>', card)
         date_match = re.search(r'(?is)<span\b[^>]*class=["\']date["\'][^>]*>(.*?)</span>', card)
         title = _plain(title_match.group(1)) if title_match else ""
-        if not is_customer_portfolio_grant(title):
+        if not (is_customer_portfolio_grant(title) or is_overseas_feasibility_project_call(title)):
             continue
         rows.append({
             "external_id": match.group(2),
@@ -262,6 +266,31 @@ def public_attachments(page: str, detail_url: str, board: str) -> list[Attachmen
         extension = re.search(r"\.(pdf|hwp|hwpx|xlsx|xls|zip)\b", label, flags=re.I)
         result.append(Attachment(label=label, url=url, file_type=extension.group(1).lower() if extension else ""))
     return result
+
+
+def keiti_project_period(attachments: list[Attachment], timeout: int, agent: str) -> tuple[str, str]:
+    """Read the first official announcement PDF; never infer a deadline from title."""
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        return "", ""
+    for attachment in attachments:
+        parsed = urlsplit(attachment.url)
+        if (attachment.file_type != "pdf" or parsed.scheme != "https"
+                or parsed.hostname != "www.keiti.re.kr" or parsed.path != "/common/board/Download.do"):
+            continue
+        if "공고문" not in attachment.label:
+            continue
+        try:
+            with urlopen(Request(attachment.url, headers={"User-Agent": agent}), timeout=timeout) as response:
+                data = response.read(2_000_001)
+            if len(data) > 2_000_000 or not data.startswith(b"%PDF-"):
+                return "", ""
+            text = " ".join((page.extract_text() or "") for page in PdfReader(io.BytesIO(data)).pages[:4])
+            return application_period(text)
+        except Exception:
+            return "", ""
+    return "", ""
 
 
 class OfficialGrantFetcher(BaseFetcher):
@@ -336,8 +365,12 @@ class OfficialGrantFetcher(BaseFetcher):
             if self.board == "kosmes" and not _keep_notice(row["start_at"], row["deadline_at"], days, now):
                 continue
             detail = fetch_text(row["url"], timeout, agent)
+            attachments = public_attachments(detail, row["url"], self.board)
             if self.board != "kosmes":
                 start, deadline = application_period(_plain(detail))
+                if self.board == "keiti" and is_overseas_feasibility_project_call(row["title"]):
+                    pdf_start, pdf_deadline = keiti_project_period(attachments, timeout, agent)
+                    start, deadline = pdf_start or start, pdf_deadline or deadline
                 row["start_at"] = start
                 row["deadline_at"] = deadline
             if row["published_at"] and row["deadline_at"] and row["deadline_at"][:10] < row["published_at"]:
@@ -358,8 +391,8 @@ class OfficialGrantFetcher(BaseFetcher):
                 procurement_method="고객사 지원사업 신청",
                 category="grant_application",
                 relevance_score=8,
-                matched_keywords=[term for term in ("탄소중립", "배출권거래제", "온실가스", "설비") if term in row["title"]],
-                attachments=public_attachments(detail, row["url"], self.board),
+                matched_keywords=[term for term in ("탄소중립", "배출권거래제", "온실가스", "설비", "타당성조사") if term in row["title"]],
+                attachments=attachments,
                 raw={
                     "source_type": "official_grant_board",
                     "source_url": base_url,

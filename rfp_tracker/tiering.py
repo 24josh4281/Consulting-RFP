@@ -124,6 +124,18 @@ DASHBOARD_CLIMATE_TERMS = (
 )
 
 
+def is_overseas_feasibility_project_call(title: str) -> bool:
+    """Overseas green-project F/S calls are a direct project lead for review."""
+    text = " ".join((title or "").casefold().split())
+    return bool(
+        re.search(r"해외\s*(?:환경|녹색|재생에너지|수소|ccus)\s*프로젝트", text)
+        and re.search(r"타당성\s*조사", text)
+        and "지원사업" in text
+        and re.search(r"모집|공고", text)
+        and not re.search(r"결과|선정|마감|취소|국제감축", text)
+    )
+
+
 def tier_label(tier: str) -> str:
     return TIER_LABELS.get(tier, TIER_LABELS[UNCLASSIFIED])
 
@@ -187,6 +199,12 @@ def assess_innergen_tier(
     equipment = _signals(text, TIER_2_EQUIPMENT_OR_FINANCE)
     if category == "grant_application":
         # Design Ref: §3 — only the allowlisted official grant adapters set this category.
+        if is_overseas_feasibility_project_call(title):
+            return TierAssessment(
+                TIER_1,
+                "해외 환경·녹색 프로젝트 타당성조사 직접 수행 기회; 신청 자격·참여 방식 원문 확인 필요",
+                ("해외 프로젝트", "타당성조사"),
+            )
         if _signals(text, SCIENCE_PROJECT) and not _signals(text, PLANNING_RESEARCH):
             return TierAssessment(TIER_3, "제외: 기술개발·실증 자체는 고객사 컨설팅·설비지원 공고가 아님")
         if support_domain and equipment and (support or "경매사업" in text):

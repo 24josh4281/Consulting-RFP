@@ -797,6 +797,7 @@ def _render_public_workbench_dashboard(payload: dict[str, object], path: Path) -
         {str(notice.get("document_status") or "not_attempted") for notice in notices}
     )
     new_tier_1_items = [item for item in notices if item.get("is_new_tier_1")]
+    upcoming_tier_1_items = [item for item in notices if item.get("business_tier") == "tier_1" and item.get("is_upcoming")]
     urgent_notices = _urgent_notices(notices)
     grant_total = sum(1 for item in notices if item.get("notice_type") == "grant_application")
     grant_active = sum(1 for item in notices if item.get("notice_type") == "grant_application" and item.get("is_active"))
@@ -852,7 +853,9 @@ def _render_public_workbench_dashboard(payload: dict[str, object], path: Path) -
         if is_grant and budget_html == "금액 미확인":
             budget_html = "공고문 확인"
         if is_grant:
-            state_label = "신청 가능" if notice.get("is_active") else ("신청 마감" if deadline else "마감 확인 필요")
+            state_label = ("신청 가능" if notice.get("is_active") else
+                           "신청 예정" if notice.get("is_upcoming") else
+                           "신청 마감" if deadline else "마감 확인 필요")
             detail_label = "공고 · 첨부 보기"
             method_label = "신청 유형"
         else:
@@ -861,7 +864,7 @@ def _render_public_workbench_dashboard(payload: dict[str, object], path: Path) -
             method_label = "입찰 방식"
         rows.append(
             f"""
-            <tr id="notice-{int(notice['id'])}" class="notice-row" data-tier="{html.escape(tier, quote=True)}" data-notice-type="{html.escape(notice_type, quote=True)}" data-active="{'active' if notice.get('is_active') else 'inactive'}" data-source="{html.escape(source_name, quote=True)}" data-document="{html.escape(status, quote=True)}" data-deadline-priority="{html.escape(deadline_priority, quote=True)}" data-deadline-group="{deadline_group}" data-urgent="{'true' if _is_urgent_tier_notice(notice) else 'false'}" data-deadline="{html.escape(deadline[:10], quote=True)}" data-search="{html.escape(search_text, quote=True)}">
+            <tr id="notice-{int(notice['id'])}" class="notice-row" data-tier="{html.escape(tier, quote=True)}" data-notice-type="{html.escape(notice_type, quote=True)}" data-active="{'active' if notice.get('is_active') else 'upcoming' if notice.get('is_upcoming') else 'inactive'}" data-source="{html.escape(source_name, quote=True)}" data-document="{html.escape(status, quote=True)}" data-deadline-priority="{html.escape(deadline_priority, quote=True)}" data-deadline-group="{deadline_group}" data-urgent="{'true' if _is_urgent_tier_notice(notice) else 'false'}" data-deadline="{html.escape(deadline[:10], quote=True)}" data-search="{html.escape(search_text, quote=True)}">
               <td data-label="공고" class="title"><span class="tier-tag {html.escape(tier, quote=True)}">{tier_label_text}</span><span class="type-tag {html.escape(notice_type, quote=True)}">{'지원금 신청' if is_grant else '입찰·구매'}</span><div class="notice-title">{_external_link(notice.get('url'), notice.get('title'))}</div><div class="meta">{html.escape(source_name)} · {html.escape(str(notice.get('published_at') or '공고일 미수집'))}</div></td>
               <td data-label="{'운영기관' if is_grant else '발주기관'}">{html.escape(str(notice.get('buyer') or '미수집'))}</td>
               <td data-label="{'신청 마감' if is_grant else '입찰 마감'}"><div class="deadline-cell"><span class="active-status {'active' if notice.get('is_active') else 'inactive'}">{state_label}</span>{_deadline_priority_badge(deadline_priority)}<div class="date">{html.escape(deadline or '마감일 미수집')}</div></div></td>
@@ -881,6 +884,25 @@ def _render_public_workbench_dashboard(payload: dict[str, object], path: Path) -
         '</article></li>'
         for item in new_tier_1_items
     ) or '<li class="empty-lead">오늘 새로 수집한 Tier 1 접수 공고는 없습니다. 아래에서 진행 중인 공고를 확인하세요.</li>'
+    upcoming_public_html = "".join(
+        '<li><article class="lead-card">'
+        '<span class="eyebrow">TIER 1 · 신청 예정</span>'
+        f'<h3>{_external_link(item.get("url"), item.get("title"))}</h3>'
+        f'<p>{html.escape(str(item.get("source_name") or "공식 출처"))}</p>'
+        f'<dl><div><dt>신청 시작</dt><dd>{html.escape(str(item.get("application_start_at") or "미확인"))}</dd></div>'
+        f'<div><dt>마감</dt><dd>{html.escape(str(item.get("deadline_at") or "미확인"))}</dd></div></dl>'
+        f'<a class="detail-link" href="#notice-{int(item["id"])}">목록에서 첨부 보기 →</a>'
+        '</article></li>'
+        for item in upcoming_tier_1_items
+    )
+    upcoming_section_html = (
+        '<section id="upcoming-tier1" class="panel" aria-labelledby="upcoming-heading">'
+        '<div class="section-head"><div><h2 id="upcoming-heading">신청 예정 Tier 1</h2>'
+        '<p>신청 시작일이 확인된 직접 수행 검토 공고입니다.</p></div>'
+        f'<span class="section-count">{len(upcoming_tier_1_items)}건</span></div>'
+        f'<ul class="lead-list">{upcoming_public_html}</ul></section>'
+        if upcoming_tier_1_items else ""
+    )
     source_select = "".join(
         f'<option value="{html.escape(value, quote=True)}">{html.escape(value)}</option>'
         for value in source_options
@@ -909,6 +931,7 @@ def _render_public_workbench_dashboard(payload: dict[str, object], path: Path) -
     <div class="section-head"><div><h2 id="new-heading">오늘 신규 Tier 1</h2><p>오늘 처음 수집한 접수 중 직접 컨설팅 후보만 표시합니다.</p></div><span class="section-count">{len(new_tier_1_items)}건</span></div>
     <ul class="lead-list">{new_public_html}</ul>
   </section>
+  {upcoming_section_html}
   <section id="notice-list" class="panel" aria-labelledby="list-heading">
     <div class="section-head"><div><h2 id="list-heading">기후 관련 전체 공고 탐색</h2><p>‘공고 유형’에서 고객사 지원금 신청과 입찰·구매를 구분할 수 있습니다. 마감 공고까지 보려면 접수 상태에서 ‘전체’를 선택하세요.</p></div></div>
     <div class="filters" role="search">

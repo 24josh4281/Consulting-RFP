@@ -841,6 +841,15 @@ def build_workbench_payload(
         deadline = parse_notice_datetime(row["deadline_at"])
         days_remaining = (deadline.date() - current_date).days if deadline else None
         is_active = is_notice_active(row, current)
+        raw = _safe_json_object(row["raw_json"])
+        application_start = parse_notice_datetime(raw.get("application_start_at"))
+        application_status = str(raw.get("application_status") or "").replace(" ", "")
+        is_upcoming = bool(
+            str(row["category"] or "") == "grant_application"
+            and application_start and application_start > current
+            and deadline and deadline >= application_start
+            and not any(marker in application_status for marker in ("마감", "접수종료", "취소"))
+        )
         priority_status, priority_rank, priority_reason = _priority_metadata(
             source_id=source_id,
             notice_url=notice_url,
@@ -865,6 +874,8 @@ def build_workbench_payload(
                 "deadline_at": str(row["deadline_at"] or ""),
                 "days_remaining": days_remaining,
                 "is_active": is_active,
+                "is_upcoming": is_upcoming,
+                "application_start_at": str(raw.get("application_start_at") or "") if is_upcoming else "",
                 "deadline_priority": deadline_priority_label(days_remaining) if is_active else "",
                 "buyer": str(row["buyer"] or ""),
                 "budget": str(row["budget"] or ""),
@@ -1040,6 +1051,8 @@ def build_public_workbench_payload(connection: sqlite3.Connection) -> dict[str, 
                 ),
                 "deadline_at": str(notice.get("deadline_at") or ""),
                 "is_active": bool(notice.get("is_active")),
+                "is_upcoming": bool(notice.get("is_upcoming")),
+                "application_start_at": str(notice.get("application_start_at") or ""),
                 "deadline_priority": str(notice.get("deadline_priority") or ""),
                 "buyer": str(notice.get("buyer") or ""),
                 "budget": str(notice.get("budget") or ""),

@@ -158,7 +158,7 @@ function revealPriorityCard() {
   const target = document.getElementById(id);
   if (!target) return;
   controls.forEach(control => { control.value = ''; });
-  document.getElementById('active').value = 'active';
+  document.getElementById('active').value = target.dataset.active === 'active' ? 'active' : '';
   const index = rows.filter(matches).indexOf(target);
   limit = Math.max(25,index + 1);
   applyFilters();

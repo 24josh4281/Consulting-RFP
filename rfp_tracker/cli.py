@@ -202,13 +202,13 @@ def sync_command(args: argparse.Namespace) -> int:
             try:
                 notices = fetcher.fetch(days=args.days)
             except Exception as exc:
-                if source.get("type") not in {"official_grant_board", "bizinfo_grant_api"}:
+                if source.get("type") not in {"official_grant_board", "bizinfo_grant_api", "keiti_bid_board"}:
                     raise
                 # A public support-board outage must not suppress G2B collection
                 # or the scheduled client briefing. Preserve the failure signal.
                 warning = f"{source['id']}: {type(exc).__name__}"
                 grant_errors.append(warning)
-                print(f"[warn] 공식 지원사업 수집 실패: {warning}", file=sys.stderr)
+                print(f"[warn] 공식 게시판 수집 실패: {warning}", file=sys.stderr)
                 continue
             print(f"[sync] {source['id']}: 후보 {len(notices)}건")
             accepted_notices = []

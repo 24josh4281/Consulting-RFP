@@ -667,6 +667,10 @@ def extract_g2b_spec_attachments(item: dict[str, Any]) -> list[Attachment]:
 
 def build_fetcher(source: dict[str, Any], keyword_config: dict[str, Any], global_config: dict[str, Any], root_dir: Path) -> BaseFetcher:
     source_type = source.get("type")
+    if source_type == "keiti_bid_board":
+        from .keiti_bid_fetcher import KeitiBidFetcher
+
+        return KeitiBidFetcher(source, keyword_config, global_config, root_dir)
     if source_type == "bizinfo_grant_api":
         from .bizinfo_fetcher import BizinfoGrantApiFetcher
 

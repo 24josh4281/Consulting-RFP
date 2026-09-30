@@ -78,6 +78,19 @@
       "notes": "온실가스·배출권거래제·MRV 관련 공식 입찰 게시판. 공개 상세 화면과 공개 첨부 링크만 제한적으로 수집합니다."
     },
     {
+      "id": "keiti_bid_notices",
+      "name": "한국환경산업기술원 입찰공고",
+      "type": "keiti_bid_board",
+      "enabled": false,
+      "url": "https://www.keiti.re.kr/site/keiti/ex/board/List.do?cbIdx=277",
+      "authority": "official",
+      "priority": "P0",
+      "max_pages": 2,
+      "max_detail_pages": 8,
+      "detail_delay_seconds": 0.25,
+      "notes": "입찰 분류만 조회하고 평가결과는 제외합니다. 마감일이 명확하지 않으면 접수 중으로 표시하지 않습니다."
+    },
+    {
       "id": "me_contract_bids",
       "name": "환경부 계약·입찰 게시판",
       "type": "generic_html",
@@ -165,7 +178,7 @@
     },
     {
       "id": "keiti_ghg_financing_grants",
-      "name": "한국환경산업기술원 온실가스 저감·융자 지원",
+      "name": "한국환경산업기술원 기후지원·해외프로젝트",
       "board": "keiti",
       "url": "https://www.keiti.re.kr/site/keiti/ex/board/List.do?cbIdx=277",
       "operator": "한국환경산업기술원",
@@ -176,7 +189,7 @@
       "authority": "official",
       "priority": "P1",
       "detail_delay_seconds": 0.25,
-      "notes": "공개 목록·상세의 온실가스 저감설비·기후컨설팅 신청 공고만 제한 조회. 기한 불명은 진행 중으로 표시하지 않음."
+      "notes": "온실가스 저감설비·기후컨설팅 신청과 해외 환경·녹색 프로젝트 타당성조사 모집을 제한 조회. 후자는 Tier 1 우선 검토로 분류하며 신청자격 확인이 필요합니다. 기한 불명은 진행 중으로 표시하지 않음."
     },
     {
       "id": "kicox_carbon_financing_grants",
