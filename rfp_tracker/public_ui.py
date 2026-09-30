@@ -60,7 +60,7 @@ table { width:100%; min-width:950px; border-collapse:collapse; table-layout:fixe
 th { background:#eaf2f0; color:#23474c; text-align:left; font-size:12px; letter-spacing:.02em; padding:11px 13px; }
 th:nth-child(1) { width:35%; } th:nth-child(2) { width:16%; } th:nth-child(3) { width:18%; } th:nth-child(4) { width:12%; } th:nth-child(5) { width:19%; }
 td { border-top:1px solid var(--line); padding:12px 13px; vertical-align:top; font-size:13px; overflow-wrap:anywhere; }
-tr:nth-child(even) td { background:#fbfdfc; } tr:hover td { background:#f2f8f6; }
+.notice-row:nth-child(4n+3) td { background:#fbfdfc; } .notice-row:hover td { background:#f2f8f6; }
 tr[hidden], [hidden] { display:none !important; }
 .notice-title { font-size:14px; font-weight:750; line-height:1.45; } .notice-title a { color:#143d46; text-decoration:none; } .notice-title a:hover { text-decoration:underline; }
 .tier-tag { display:inline-block; margin-bottom:7px; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:800; }
@@ -72,8 +72,11 @@ tr[hidden], [hidden] { display:none !important; }
 .active-status,.deadline-priority { display:inline-block; padding:2px 7px; border-radius:6px; font-size:11px; font-weight:800; white-space:nowrap; }
 .active-status.active { background:#e6f4ec; color:#206642; } .active-status.inactive { background:#edf1f2; color:#52636a; }
 .deadline-priority { margin-left:5px; border:1px solid; }
-.row-details summary { cursor:pointer; color:#0a5c69; font-weight:800; font-size:12px; }
-.docs { width:100%; margin-top:10px; padding:12px; background:#fff; border:1px solid var(--line); border-radius:8px; font-size:12px; font-weight:400; }
+.detail-toggle { display:block; width:100%; min-height:0; padding:0; border:0; border-radius:0; background:transparent; color:#0a5c69; text-align:left; font-size:12px; font-weight:800; }
+.detail-toggle::before { content:'▸ '; } .detail-toggle[aria-expanded="true"]::before { content:'▾ '; }
+.detail-row td { padding:0 13px 13px; background:#f7fbfa; }
+.detail-row:hover td { background:#f7fbfa; }
+.docs { width:100%; margin:0; padding:12px; background:#fff; border:1px solid var(--line); border-radius:8px; font-size:12px; font-weight:400; }
 .docs p { margin:6px 0; } .document-card { border-top:1px solid var(--line); margin-top:10px; padding-top:8px; }
 .document-header { display:flex; flex-wrap:wrap; gap:5px 9px; } .muted,.amount span { color:var(--muted); }
 .more { display:block; width:auto; margin:17px auto 0; border-color:#0b6257; color:#0b6257; font-weight:800; }
@@ -90,7 +93,10 @@ tr[hidden], [hidden] { display:none !important; }
   td { display:grid; grid-template-columns:86px minmax(0,1fr); gap:10px; border:0; border-top:1px solid #edf1f1; padding:9px 12px; }
   td::before { content:attr(data-label); color:var(--muted); font-size:11px; font-weight:800; }
   td.title { display:block; border-top:0; } td.title::before { display:none; } .number { text-align:left; }
-  .docs { width:100%; } tr:nth-child(even) td { background:#fff; }
+  .detail-row { margin-top:-10px; border-top:0; }
+  .detail-row td { display:block; padding:0 12px 12px; background:#f7fbfa; }
+  .detail-row td::before { display:none; }
+  .docs { width:100%; } .notice-row:nth-child(4n+3) td { background:#fff; }
 }
 @media (max-width:430px) { .kpis { grid-template-columns:1fr 1fr; } }
 """
@@ -102,6 +108,15 @@ const resultCount = document.getElementById('result-count');
 const empty = document.getElementById('empty');
 const more = document.getElementById('more');
 let limit = 25;
+rows.forEach(row => {
+  const toggle = row.querySelector('.detail-toggle');
+  const detail = document.getElementById(toggle.getAttribute('aria-controls'));
+  toggle.addEventListener('click', () => {
+    const expanded = toggle.getAttribute('aria-expanded') !== 'true';
+    toggle.setAttribute('aria-expanded', String(expanded));
+    detail.hidden = !expanded || row.hidden;
+  });
+});
 function matches(row) {
   const query = document.getElementById('search').value.trim().toLocaleLowerCase();
   const tier = document.getElementById('tier').value;
@@ -124,7 +139,11 @@ function applyFilters(resetPage = false) {
   if (resetPage) limit = 25;
   const filtered = rows.filter(matches);
   const visible = new Set(filtered.slice(0,limit));
-  rows.forEach(row => { row.hidden = !visible.has(row); });
+  rows.forEach(row => {
+    row.hidden = !visible.has(row);
+    const toggle = row.querySelector('.detail-toggle');
+    document.getElementById(toggle.getAttribute('aria-controls')).hidden = row.hidden || toggle.getAttribute('aria-expanded') !== 'true';
+  });
   resultCount.textContent = filtered.length + '건 검색 · ' + visible.size + '건 표시';
   empty.hidden = filtered.length !== 0;
   more.hidden = filtered.length <= limit;
@@ -162,8 +181,9 @@ function revealPriorityCard() {
   const index = rows.filter(matches).indexOf(target);
   limit = Math.max(25,index + 1);
   applyFilters();
-  const details = target.querySelector('details');
-  if (details) details.open = true;
+  const toggle = target.querySelector('.detail-toggle');
+  toggle.setAttribute('aria-expanded', 'true');
+  document.getElementById(toggle.getAttribute('aria-controls')).hidden = false;
   target.scrollIntoView({block:'center'});
 }
 window.addEventListener('hashchange', revealPriorityCard);

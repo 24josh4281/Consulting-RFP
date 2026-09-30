@@ -869,8 +869,9 @@ def _render_public_workbench_dashboard(payload: dict[str, object], path: Path) -
               <td data-label="{'운영기관' if is_grant else '발주기관'}">{html.escape(str(notice.get('buyer') or '미수집'))}</td>
               <td data-label="{'신청 마감' if is_grant else '입찰 마감'}"><div class="deadline-cell"><span class="active-status {'active' if notice.get('is_active') else 'inactive'}">{state_label}</span>{_deadline_priority_badge(deadline_priority)}<div class="date">{html.escape(deadline or '마감일 미수집')}</div></div></td>
               <td data-label="공고 금액" class="number">{budget_html}</td>
-              <td data-label="자료·상세"><details class="row-details"><summary>{detail_label}</summary><div class="docs"><p><strong>{method_label}:</strong> {method_html}</p>{summary_html}{amount_html}{_workbench_document_details(notice)}</div></details></td>
+              <td data-label="자료·상세"><button type="button" class="detail-toggle" aria-expanded="false" aria-controls="detail-{int(notice['id'])}">{detail_label}</button></td>
             </tr>
+            <tr id="detail-{int(notice['id'])}" class="detail-row" hidden><td colspan="5"><div class="docs"><p><strong>{method_label}:</strong> {method_html}</p>{summary_html}{amount_html}{_workbench_document_details(notice)}</div></td></tr>
             """
         )
     new_public_html = "".join(
