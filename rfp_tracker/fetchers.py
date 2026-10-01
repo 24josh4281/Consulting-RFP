@@ -525,10 +525,8 @@ class G2BBidApiFetcher(BaseFetcher):
 
     @classmethod
     def _is_currently_open(cls, notice: Notice, now: datetime) -> bool:
-        # A future notice is published but is not yet accepting bids.
-        begin_at = cls._parse_bid_datetime((notice.raw or {}).get("bidBeginDt"), now)
-        if begin_at is not None and begin_at > now:
-            return False
+        # Include published pre-bid notices so proposal preparation can start
+        # before the electronic bid window opens; still exclude expired bids.
         deadline = cls._parse_bid_datetime(notice.deadline_at, now)
         return deadline is None or deadline >= now
 
