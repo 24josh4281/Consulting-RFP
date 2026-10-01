@@ -60,9 +60,23 @@ def deadline_priority_group(priority: str) -> str:
     return ""
 
 
+def notice_bid_start(row: Any) -> datetime | None:
+    """Read the electronic bid start only for G2B notices."""
+    if "source_id" not in row.keys() or not str(row["source_id"] or "").startswith("g2b_"):
+        return None
+    try:
+        raw = json.loads(str(row["raw_json"] or "{}"))
+    except (KeyError, IndexError, TypeError, json.JSONDecodeError):
+        return None
+    return parse_notice_datetime(raw.get("bidBeginDt")) if isinstance(raw, dict) else None
+
+
 def is_notice_active(row: Any, now: datetime | None = None) -> bool:
     """Return whether a stored notice is still accepting bids or has no known deadline."""
     current = now or seoul_now()
+    bid_start = notice_bid_start(row)
+    if bid_start and bid_start > current:
+        return False
     category = str(row["category"] or "") if "category" in row.keys() else ""
     if category == "grant_application":
         # A grant must have positive application-window evidence to be called open.
