@@ -129,7 +129,7 @@ function matches(row) {
   return (!query || row.dataset.search.includes(query))
     && (!tier || row.dataset.tier === tier)
     && (!noticeType || row.dataset.noticeType === noticeType)
-    && (!active || row.dataset.active === active)
+    && (!active || (active === 'open' ? ['active', 'upcoming'].includes(row.dataset.active) : row.dataset.active === active))
     && (!priority || (priority === 'urgent' ? row.dataset.urgent === 'true' : row.dataset.deadlineGroup === priority))
     && (!source || row.dataset.source === source)
     && (!documentStatus || row.dataset.document === documentStatus)

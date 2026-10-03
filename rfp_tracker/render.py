@@ -376,7 +376,9 @@ def _new_notice_rows(notices: list[dict[str, object]]) -> str:
     for notice in ordered:
         tier = str(notice.get("business_tier") or "unclassified")
         tier_text = WORKBENCH_TIER_LABELS.get(tier, tier)
-        active_text = "현재 접수 중" if notice.get("is_active") else "마감 경과·확인 필요"
+        active_text = ("현재 접수 중" if notice.get("is_active") else
+                       "입찰 시작 전" if notice.get("is_upcoming") and notice.get("notice_type") == "procurement_bid" else
+                       "신청 예정" if notice.get("is_upcoming") else "마감 경과·확인 필요")
         budget = _format_krw(notice.get("budget_value_krw"))
         if budget == "금액 미확인" and notice.get("budget"):
             budget = html.escape(str(notice.get("budget")))
@@ -421,7 +423,7 @@ def render_workbench_dashboard(
     )
     new_notices = [
         notice for notice in notices
-        if notice.get("is_new_today") and notice.get("is_active") and notice.get("priority_status") == "official_tier_1"
+        if notice.get("is_new_today") and (notice.get("is_active") or (notice.get("is_upcoming") and notice.get("notice_type") == "procurement_bid")) and notice.get("priority_status") == "official_tier_1"
     ]
     urgent_notices = _urgent_notices(notices)
 
@@ -797,7 +799,7 @@ def _render_public_workbench_dashboard(payload: dict[str, object], path: Path) -
         {str(notice.get("document_status") or "not_attempted") for notice in notices}
     )
     new_tier_1_items = [item for item in notices if item.get("is_new_tier_1")]
-    upcoming_tier_1_items = [item for item in notices if item.get("business_tier") == "tier_1" and item.get("is_upcoming")]
+    upcoming_tier_1_items = [item for item in notices if item.get("business_tier") == "tier_1" and item.get("is_upcoming") and item.get("notice_type") == "grant_application"]
     urgent_notices = _urgent_notices(notices)
     grant_total = sum(1 for item in notices if item.get("notice_type") == "grant_application")
     grant_active = sum(1 for item in notices if item.get("notice_type") == "grant_application" and item.get("is_active"))
@@ -859,7 +861,8 @@ def _render_public_workbench_dashboard(payload: dict[str, object], path: Path) -
             detail_label = "공고 · 첨부 보기"
             method_label = "신청 유형"
         else:
-            state_label = "입찰 접수 중" if notice.get("is_active") else "입찰 종료·확인"
+            state_label = ("입찰 접수 중" if notice.get("is_active") else
+                           "입찰 시작 전" if notice.get("is_upcoming") else "입찰 종료·확인")
             detail_label = "RFP · 상세 보기"
             method_label = "입찰 방식"
         rows.append(
@@ -929,7 +932,7 @@ def _render_public_workbench_dashboard(payload: dict[str, object], path: Path) -
   </section>
   <aside class="grant-callout" aria-label="고객사 지원사업 현황"><div><strong>고객사 지원사업 · 현재 신청 가능 {grant_active}건</strong><p>공식 참여기업 모집공고 {grant_total}건을 별도 수집했습니다. 마감된 공고도 다음 모집을 준비할 때 확인할 수 있습니다.</p></div><button id="grant-all" type="button">지원사업 전체 보기 →</button></aside>
   <section id="new-tier1" class="panel" aria-labelledby="new-heading">
-    <div class="section-head"><div><h2 id="new-heading">오늘 신규 Tier 1</h2><p>오늘 처음 수집한 접수 중 직접 컨설팅 후보만 표시합니다.</p></div><span class="section-count">{len(new_tier_1_items)}건</span></div>
+    <div class="section-head"><div><h2 id="new-heading">오늘 신규 Tier 1</h2><p>오늘 처음 수집한 접수 중·입찰 시작 전 직접 컨설팅 후보를 표시합니다.</p></div><span class="section-count">{len(new_tier_1_items)}건</span></div>
     <ul class="lead-list">{new_public_html}</ul>
   </section>
   {upcoming_section_html}
@@ -939,7 +942,7 @@ def _render_public_workbench_dashboard(payload: dict[str, object], path: Path) -
       <div><label for="search">공고 검색</label><input id="search" type="search" placeholder="공고명·기관·과업 키워드"></div>
       <div><label for="tier">업무 적합성</label><select id="tier"><option value="">Tier 1·2·3 전체</option><option value="tier_1">Tier 1 · 직접 컨설팅</option><option value="tier_2">Tier 2 · 고객사 지원</option><option value="tier_3">Tier 3 · 관련 참고</option></select></div>
       <div><label for="notice-type">공고 유형</label><select id="notice-type"><option value="">전체 유형</option><option value="grant_application">고객사 지원금 신청</option><option value="procurement_bid">입찰·구매 공고</option></select></div>
-      <div><label for="active">접수 상태</label><select id="active"><option value="active" selected>접수 중</option><option value="">전체</option><option value="inactive">마감 경과·확인</option></select></div>
+      <div><label for="active">접수 상태</label><select id="active"><option value="open" selected>접수 중·시작 전</option><option value="active">접수 중</option><option value="upcoming">시작 전</option><option value="">전체</option><option value="inactive">마감 경과·확인</option></select></div>
       <div><label for="deadline-priority">마감 임박</label><select id="deadline-priority"><option value="">전체</option><option value="urgent">Tier 1·2 D-7 이내</option><option value="yellow">D-7~D-4 · 노랑</option><option value="red">D-3~D-1 · 빨강</option><option value="deep-red">D-DAY · 진한 빨강</option></select></div>
       <div><label for="source">출처</label><select id="source"><option value="">전체</option>{source_select}</select></div>
     </div>
