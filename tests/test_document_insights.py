@@ -4,6 +4,8 @@ from io import BytesIO
 from datetime import timedelta
 from pathlib import Path
 import tempfile
+import json
+from unittest.mock import patch
 import unittest
 import zipfile
 
@@ -248,6 +250,74 @@ class DocumentInsightTests(unittest.TestCase):
         self.assertEqual(amount["amount_basis"], "예산액")
         self.assertEqual(amount["amount_value_krw"], 500_000_000)
         self.assertEqual(amount["amount_text"], "500,000,000원")
+
+    def test_keiti_grant_extraction_and_public_card(self):
+        fixture = json.loads((Path(__file__).parent / "fixtures/keiti_41408_amount_paragraphs.json").read_text())
+        payload = BytesIO()
+        import html
+        xml = '<hp:section xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph">' + ''.join(
+            '<hp:p><hp:run><hp:t>' + html.escape(p) + '</hp:t></hp:run></hp:p>'
+            for p in fixture["paragraphs"]
+        ) + '</hp:section>'
+        with zipfile.ZipFile(payload, "w") as archive:
+            archive.writestr("Contents/section0.xml", xml)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            document = root / "official.hwpx"
+            document.write_bytes(payload.getvalue())
+            connection = connect(root / "tracker.db")
+            upsert_notice(connection, Notice(
+                source_id="keiti_climate_projects", source_name="KEITI", external_id="41408",
+                title="해외 환경프로젝트 본타당성조사 지원사업", url=fixture["source_url"],
+                category="grant_application", business_tier="tier_1",
+                deadline_at=(seoul_now() + timedelta(days=3)).isoformat(),
+                attachments=[Attachment("사업안내서", fixture["source_url"] + "&file=1", "hwpx")],
+            ))
+            with patch("rfp_tracker.documents._download_public_hwpx", return_value=document):
+                result = extract_document_insights(connection, cache_dir=root)
+            self.assertEqual(result[0]["amount_text"], "최대 12억원 내외")
+            public = build_public_workbench_payload(connection)
+            output = root / "index.html"
+            render_workbench_dashboard(public, output, public=True)
+            rendered = output.read_text()
+            self.assertIn("최대 12억원 내외", rendered)
+            self.assertNotIn("금액:</strong> 2천만원", rendered)
+            self.assertNotIn("근거:</strong> 원칙적으로", rendered)
+            # Re-extraction overwrites stale evidence rather than retaining it.
+            unknown = root / "unknown.hwpx"
+            with zipfile.ZipFile(unknown, "w") as archive:
+                archive.writestr("Contents/section0.xml", '<hp:section xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph"><hp:p><hp:run><hp:t>추정가격 2천만원을 초과하는 구매계약은 나라장터 이용</hp:t></hp:run></hp:p></hp:section>')
+            with patch("rfp_tracker.documents._download_public_hwpx", return_value=unknown):
+                result = extract_document_insights(connection, cache_dir=root)
+            self.assertEqual(result[0]["amount_text"], "")
+            render_workbench_dashboard(build_public_workbench_payload(connection), output, public=True)
+            rendered = output.read_text()
+            self.assertIn("공고문 확인", rendered)
+            self.assertNotIn("금액:</strong> 2천만원", rendered)
+            self.assertNotIn("금액:</strong> 최대 12억원", rendered)
+            connection.close()
+
+    def test_grant_amount_context_and_ambiguity(self):
+        threshold = "원칙적으로 수행기업 및 참여기관의 장 등이 추정가격 2천만원을 초과하는 물품 및 용역구매계약 등을 체결하는 경우 국가종합전자조달시스템(나라장터)을 이용하여 계약을 체결"
+        cases = [
+            ([threshold], None, ""),
+            ([threshold, "본타당성조사 프로젝트 당 최대 12억원 내외 지원"], 1200000000, "최대 12억원 내외"),
+            (["정부지원금: 과제당 최대 1.5억 원 이내"], 150000000, "최대 1.5억원 이내"),
+            (["지원규모: 기업당 5,000만 원 한도"], 50000000, "5,000만원 한도"),
+            (["지원금액: 300백만원"], 300000000, "300백만원"),
+            (["지원규모: 총 사업비 12억원, 정부지원금 70%"], None, ""),
+            (["지원규모: 과제당 1~3억원"], None, ""),
+            (["지원금액: 1억 5천만원"], None, ""),
+            (["정부지원금 환수 금액: 3억원"], None, ""),
+            (["과제당 2억원", "과제당 12억원"], None, ""),
+            (["지원규모", "12억원"], None, ""),
+        ]
+        for paragraphs, value, text in cases:
+            with self.subTest(paragraphs=paragraphs):
+                result = extract_amount_evidence(paragraphs, notice_type="grant_application")
+                self.assertEqual(result["amount_value_krw"], value)
+                self.assertEqual(result["amount_text"], text)
+        self.assertEqual(extract_amount_evidence(["추정가격 2천만원"])["amount_value_krw"], 20000000)
 
     def test_known_gir_task_summary_is_concise_and_source_based(self):
         summary = summarize_hwpx_task(
