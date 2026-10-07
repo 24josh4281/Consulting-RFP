@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+from decimal import Decimal
 import hashlib
 import html
 import json
@@ -243,6 +244,7 @@ def list_document_rows(
           n.deadline_at,
           n.procurement_method,
           n.budget,
+          n.category,
           n.relevance_score,
           n.matched_keywords,
           n.review_status,
@@ -291,6 +293,7 @@ def list_document_rows(
                 "source_name": row["source_name"],
                 "external_id": row["external_id"],
                 "notice_title": row["notice_title"],
+                "category": row["category"] or "",
                 "notice_url": row["notice_url"] or "",
                 "buyer": row["buyer"] or "",
                 "published_at": row["published_at"] or "",
@@ -547,8 +550,67 @@ def _parse_amount_to_krw(raw_amount: str, unit: str) -> int | None:
     return amount * multiplier if multiplier is not None else None
 
 
-def extract_amount_evidence(paragraphs: list[str]) -> dict[str, object]:
+GRANT_AMOUNT_CONTEXT = re.compile(
+    r"지원\s*규모|정부\s*지원금|지원\s*금액|지원\s*한도|보조금|"
+    r"(?:과제|프로젝트|기업|업체)\s*당"
+)
+GRANT_EXCLUDED_CONTEXT = re.compile(
+    r"추\s*정\s*가\s*격|구매\s*계약|나라장터|국가종합전자조달|"
+    r"민간\s*부담|자부담|총\s*사업비|총\s*예산|환수|반납|위약|정산|예시"
+)
+GRANT_VALUE_PATTERN = re.compile(
+    r"(?P<amount>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)"
+    r"\s*(?P<unit>억\s*원|천만\s*원|백만\s*원|만\s*원|원)"
+)
+
+
+def _extract_grant_amount(paragraphs: list[str]) -> dict[str, object]:
+    candidates = []
+    for paragraph in paragraphs:
+        # Keep the label and value in the same short sentence. Do not borrow
+        # amounts from adjacent tables/paragraphs or infer amounts from ratios.
+        for sentence in re.split(r"[;。\n]|(?<=[.!?])\s+", paragraph):
+            sentence = _normalize_paragraph(sentence)
+            if len(sentence) > 240 or GRANT_EXCLUDED_CONTEXT.search(sentence):
+                continue
+            if not GRANT_AMOUNT_CONTEXT.search(sentence):
+                continue
+            values = list(GRANT_VALUE_PATTERN.finditer(sentence))
+            if len(values) != 1:
+                continue
+            match = values[0]
+            if re.search(r"\d\s*(?:조|억|천만|백만|만)\s*$", sentence[:match.start()]):
+                continue
+            if re.search(r"\d\s*[~～–-]\s*$", sentence[:match.start()]):
+                continue
+            unit = re.sub(r"\s", "", match.group("unit"))
+            multiplier = {"원": 1, "만원": 10000, "백만원": 1000000,
+                          "천만원": 10000000, "억원": 100000000}[unit]
+            value = Decimal(match.group("amount").replace(",", "")) * multiplier
+            if value <= 0 or value != value.to_integral_value():
+                continue
+            qualifier = "최대 " if "최대" in sentence else ""
+            suffix = " 내외" if "내외" in sentence else " 이내" if "이내" in sentence else " 한도" if "한도" in sentence else ""
+            candidates.append({
+                "amount_value_krw": int(value),
+                "amount_text": qualifier + match.group("amount") + unit + suffix,
+                "amount_basis": "지원규모",
+                "evidence_excerpt": sentence,
+            })
+    # Multiple different amounts or conditions cannot safely become one card.
+    unique = {(c["amount_value_krw"], c["amount_text"]) for c in candidates}
+    if len(unique) == 1:
+        return candidates[0]
+    return {"amount_value_krw": None, "amount_text": "",
+            "amount_basis": "", "evidence_excerpt": ""}
+
+
+def extract_amount_evidence(
+    paragraphs: list[str], *, notice_type: str = "procurement_bid"
+) -> dict[str, object]:
     """Find a labeled source amount and preserve its wording/basis."""
+    if notice_type == "grant_application":
+        return _extract_grant_amount(paragraphs)
     for basis, label_pattern in AMOUNT_BASIS_PATTERNS:
         label_re = re.compile(label_pattern)
         for paragraph in paragraphs:
@@ -654,7 +716,9 @@ def extract_document_insights(
                 cache_path = str(cached)
                 paragraphs = extract_hwpx_paragraphs(cached.read_bytes())
                 task_summary = summarize_hwpx_task(paragraphs, str(row["notice_title"] or ""))
-                amount = extract_amount_evidence(paragraphs)
+                amount = extract_amount_evidence(
+                    paragraphs, notice_type=str(row["category"] or "procurement_bid")
+                )
                 status = "extracted" if task_summary or amount["amount_text"] else "processed_no_evidence"
             except (OSError, ValueError, zipfile.BadZipFile, ElementTree.ParseError, RuntimeError) as exc:
                 status = "parse_failed" if cache_path else "download_failed"

@@ -348,3 +348,15 @@ Codex 예약 작업과 Windows 작업 스케줄러는 **둘 중 하나만** 운�
 - `reports/briefing_official.md`: 메일/메신저에 복사하기 쉬운 요약
 
 기존 `data/rfp_tracker_live.db`는 이전 수집 결과를 보존합니다. 최신 공식 상세 수집 결과는 별도 `data/rfp_tracker_official.db`에 저장하므로, 과거 범용 HTML 후보와 섞이지 않습니다.
+
+## 지원사업 문서 금액 추출
+
+`grant_application` 문서는 지원규모·정부지원금·지원금액·지원한도·보조금·과제당/프로젝트당/기업당 문맥에서 단일 지원액만 추출합니다. 추정가격·구매계약·나라장터 기준, 총사업비·민간부담금, 환수·정산·예시 금액은 제외합니다. 서로 다른 지원액, 범위, 단위가 불명확한 표현은 숫자로 추정하지 않으며 목록은 `공고문 확인`으로 남깁니다. 최대·내외·이내·한도 조건과 원문 근거를 함께 보존합니다. 조달 입찰의 기존 금액 추출은 유지합니다.
+
+기존 운영 DB의 잘못된 추출 결과는 `extract-documents`로 다시 추출한 뒤 `render-workbench --public`으로 재생성해야 합니다. 운영 DB 없이 이미 생성된 공개 HTML의 문서 금액만 재검증하려면 다음 명령을 사용합니다. 공개 HWPX를 다시 읽어 문서 카드와 대표 문서 금액을 갱신하며, 원문 다운로드가 실패하면 중단합니다. 목록 API 금액과 다른 공고·수집시각은 보존합니다.
+
+```bash
+python scripts/refresh_grant_snapshot_amounts.py --snapshot site/index.html --cache-dir data/document_cache
+```
+
+2026-10-07 검증: KEITI 공고 41408의 사업안내서에서 `본타당성조사 프로젝트 당 최대 12억원 내외`를 추출하고, `추정가격 2천만원` 구매계약 기준을 제외했습니다. 공식 원문 발췌 fixture와 SQLite 저장→추출→공개 렌더 회귀 테스트에서 12억원 표시와 불명확할 때 기존 금액 제거를 검증했습니다. 전체 96개 테스트 중 95개 통과, 기존 `test_skips_result_only_page_and_reads_next_page`는 2026-09-30 고정 공고를 `days=2`로 조회하여 실패하며 수정 전 HEAD에서도 같은 실패를 확인했습니다.
