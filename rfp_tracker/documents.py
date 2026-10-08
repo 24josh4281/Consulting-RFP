@@ -15,7 +15,7 @@ from urllib.parse import unquote, urlparse
 from xml.etree import ElementTree
 
 from .fetchers import extract_g2b_spec_attachments
-from .briefing import deadline_priority_label, is_notice_active, parse_notice_datetime, seoul_now
+from .briefing import deadline_priority_label, is_notice_active, notice_bid_start, parse_notice_datetime, seoul_now
 from .keyword_matcher import extension_from_url, normalize_text
 from .storage import list_workbench_notices, upsert_attachments_for_notice, upsert_document_insight
 from .tiering import is_dashboard_related_notice
@@ -850,6 +850,10 @@ def build_workbench_payload(
             and deadline and deadline >= application_start
             and not any(marker in application_status for marker in ("마감", "접수종료", "취소"))
         )
+        bid_start = notice_bid_start(row)
+        is_upcoming = is_upcoming or bool(
+            bid_start and bid_start > current and (deadline is None or deadline >= bid_start)
+        )
         priority_status, priority_rank, priority_reason = _priority_metadata(
             source_id=source_id,
             notice_url=notice_url,
@@ -1046,7 +1050,7 @@ def build_public_workbench_payload(connection: sqlite3.Connection) -> dict[str, 
                 "is_new_today": bool(notice.get("is_new_today")),
                 "is_new_tier_1": bool(
                     notice.get("is_new_today")
-                    and notice.get("is_active")
+                    and (notice.get("is_active") or (notice.get("is_upcoming") and notice.get("notice_type") == "procurement_bid"))
                     and notice.get("priority_status") == "official_tier_1"
                 ),
                 "deadline_at": str(notice.get("deadline_at") or ""),
