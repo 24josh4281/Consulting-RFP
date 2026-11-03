@@ -6,6 +6,7 @@ from pathlib import Path
 import tempfile
 import unittest
 import zipfile
+from unittest.mock import patch
 
 from rfp_tracker.documents import (
     backfill_g2b_attachments,
@@ -31,6 +32,39 @@ from rfp_tracker.storage import (
 
 
 class DocumentInsightTests(unittest.TestCase):
+    def test_manual_tier_one_today_is_featured_without_changing_collection_date(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            connection = connect(Path(tmp_dir) / "tracker.db")
+            now = seoul_now()
+            old_date = (now - timedelta(days=7)).isoformat(timespec="seconds")
+            for external_id, tier, source, tier_date, deadline in (
+                ("promoted", "tier_1", "manual", now, now + timedelta(days=7)),
+                ("old-manual", "tier_1", "manual", now - timedelta(days=1), now + timedelta(days=7)),
+                ("automatic", "tier_1", "automatic", now, now + timedelta(days=7)),
+                ("support", "tier_2", "manual", now, now + timedelta(days=7)),
+                ("closed", "tier_1", "manual", now, now - timedelta(days=1)),
+            ):
+                upsert_notice(connection, Notice(
+                    source_id="official_board", source_name="공식 공고", external_id=external_id,
+                    title=f"온실가스 컨설팅 {external_id}", url=f"https://official.example/{external_id}",
+                    business_tier=tier, deadline_at=deadline.isoformat(timespec="seconds"),
+                ))
+                connection.execute(
+                    "UPDATE notices SET first_seen_at=?,tier_source=?,tiered_at=? WHERE external_id=?",
+                    (old_date, source, tier_date.isoformat(timespec="seconds"), external_id),
+                )
+            connection.commit()
+            with patch("rfp_tracker.documents.seoul_now", return_value=now):
+                public = build_public_workbench_payload(connection)
+            featured = [n for n in public["notices"] if n["is_new_tier_1"]]
+            self.assertEqual([n["title"] for n in featured], ["온실가스 컨설팅 promoted"])
+            self.assertEqual(featured[0]["first_seen_at"], old_date)
+            self.assertFalse(featured[0]["is_new_today"])
+            with patch("rfp_tracker.documents.seoul_now", return_value=now + timedelta(days=1)):
+                tomorrow = build_public_workbench_payload(connection)
+            self.assertFalse(any(n["is_new_tier_1"] for n in tomorrow["notices"]))
+            connection.close()
+
     def test_public_dashboard_only_features_new_active_tier_one(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)

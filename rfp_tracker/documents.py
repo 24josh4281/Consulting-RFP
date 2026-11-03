@@ -838,6 +838,12 @@ def build_workbench_payload(
         business_tier = str(row["business_tier"] or "unclassified")
         review_status = str(row["review_status"] or "new")
         first_seen_at = str(row["first_seen_at"] or "")
+        first_seen = parse_notice_datetime(first_seen_at)
+        tiered_at = parse_notice_datetime(row["tiered_at"])
+        is_new_tier_1_today = business_tier == "tier_1" and bool(
+            (first_seen and first_seen.date() == current_date)
+            or (row["tier_source"] == "manual" and tiered_at and tiered_at.date() == current_date)
+        )
         deadline = parse_notice_datetime(row["deadline_at"])
         days_remaining = (deadline.date() - current_date).days if deadline else None
         is_active = is_notice_active(row, current)
@@ -871,6 +877,7 @@ def build_workbench_payload(
                     (first_seen := parse_notice_datetime(first_seen_at))
                     and first_seen.date() == current_date
                 ),
+                "is_new_tier_1": bool(is_new_tier_1_today and is_active and priority_status == "official_tier_1"),
                 "deadline_at": str(row["deadline_at"] or ""),
                 "days_remaining": days_remaining,
                 "is_active": is_active,
@@ -962,7 +969,7 @@ def build_workbench_payload(
         "active_tier_3": sum(1 for item in notices if item["is_active"] and item["business_tier"] == "tier_3"),
         "new_today": sum(1 for item in notices if item["is_new_today"]),
         "new_active_today": sum(1 for item in notices if item["is_new_today"] and item["is_active"]),
-        "new_tier_1_today": sum(1 for item in notices if item["is_new_today"] and item["business_tier"] == "tier_1"),
+        "new_tier_1_today": sum(1 for item in notices if item["is_new_tier_1"]),
         "new_tier_2_today": sum(1 for item in notices if item["is_new_today"] and item["business_tier"] == "tier_2"),
         "tier_1": sum(1 for item in notices if item["business_tier"] == "tier_1"),
         "tier_2": sum(1 for item in notices if item["business_tier"] == "tier_2"),
@@ -1045,7 +1052,7 @@ def build_public_workbench_payload(connection: sqlite3.Connection) -> dict[str, 
                 "first_seen_at": str(notice.get("first_seen_at") or ""),
                 "is_new_today": bool(notice.get("is_new_today")),
                 "is_new_tier_1": bool(
-                    notice.get("is_new_today")
+                    notice.get("is_new_tier_1")
                     and notice.get("is_active")
                     and notice.get("priority_status") == "official_tier_1"
                 ),

@@ -421,7 +421,7 @@ def render_workbench_dashboard(
     )
     new_notices = [
         notice for notice in notices
-        if notice.get("is_new_today") and notice.get("is_active") and notice.get("priority_status") == "official_tier_1"
+        if notice.get("is_new_tier_1")
     ]
     urgent_notices = _urgent_notices(notices)
 
@@ -464,7 +464,7 @@ def render_workbench_dashboard(
           <div class="priority-heading">
             <div>
               <h2>오늘 신규 추가 · Tier 1</h2>
-              <p>오늘 처음 수집했고 현재 접수 중인 Tier 1 후보 {len(new_notices)}건입니다.</p>
+              <p>오늘 새로 수집하거나 Tier 1으로 지정한 접수 중 후보 {len(new_notices)}건입니다.</p>
             </div>
           </div>
           <div class="table-wrap">
@@ -884,7 +884,7 @@ def _render_public_workbench_dashboard(payload: dict[str, object], path: Path) -
         f'<a class="detail-link" href="#notice-{int(item["id"])}">목록에서 자료 보기 →</a>'
         '</article></li>'
         for item in new_tier_1_items
-    ) or '<li class="empty-lead">오늘 새로 수집한 Tier 1 접수 공고는 없습니다. 아래에서 진행 중인 공고를 확인하세요.</li>'
+    ) or '<li class="empty-lead">오늘 새로 수집하거나 Tier 1으로 지정한 접수 공고는 없습니다. 아래에서 진행 중인 공고를 확인하세요.</li>'
     upcoming_public_html = "".join(
         '<li><article class="lead-card">'
         '<span class="eyebrow">TIER 1 · 신청 예정</span>'
@@ -929,7 +929,7 @@ def _render_public_workbench_dashboard(payload: dict[str, object], path: Path) -
   </section>
   <aside class="grant-callout" aria-label="고객사 지원사업 현황"><div><strong>고객사 지원사업 · 현재 신청 가능 {grant_active}건</strong><p>공식 참여기업 모집공고 {grant_total}건을 별도 수집했습니다. 마감된 공고도 다음 모집을 준비할 때 확인할 수 있습니다.</p></div><button id="grant-all" type="button">지원사업 전체 보기 →</button></aside>
   <section id="new-tier1" class="panel" aria-labelledby="new-heading">
-    <div class="section-head"><div><h2 id="new-heading">오늘 신규 Tier 1</h2><p>오늘 처음 수집한 접수 중 직접 컨설팅 후보만 표시합니다.</p></div><span class="section-count">{len(new_tier_1_items)}건</span></div>
+    <div class="section-head"><div><h2 id="new-heading">오늘 신규 Tier 1</h2><p>오늘 새로 수집하거나 Tier 1으로 지정한 접수 중 직접 컨설팅 후보를 표시합니다.</p></div><span class="section-count">{len(new_tier_1_items)}건</span></div>
     <ul class="lead-list">{new_public_html}</ul>
   </section>
   {upcoming_section_html}
